@@ -43,7 +43,7 @@ TITLE_CACHE_FILE = DATA_DIR / "title_cache.json"  # For Jaccard dedup
 
 # LLM CONFIG - mimo-v2.5 primary (clean JSON), deepseek v4-flash fallback
 LLM_API_URL = "https://opencode.ai/zen/go/v1/chat/completions"
-LLM_MODELS = ["mimo-v2.5", "minimax-m3"]  # Primary → Fallback (reasoning model)
+LLM_MODELS = ["deepseek-v4-flash", "mimo-v2.5", "claude-sonnet-4.6"]  # Primary → Fallback → Fallback
 DRY_RUN = False  # Set to True via --dry-run flag
 LLM_MAX_TOKENS = 6000
 LLM_TIMEOUT = 90  # 90s per model (increased for retries)
@@ -762,22 +762,53 @@ def extract_json_from_content(content):
     1. {"slide_1": "text...", "slide_2": "text..."}  (string format)
     2. {"slide_1": {"hook": "..."}, "slide_2": {"content": "..."}}  (object format)
     3. Wrapped in ```json ... ``` blocks
+    4. Wrapped in ``` ... ``` blocks (no language tag)
+    5. Extra text before/after JSON
     """
-    # Strip markdown code blocks
+    # Strip markdown code blocks (multiple patterns)
     content = re.sub(r'```json\s*', '', content)
     content = re.sub(r'```\s*$', '', content)
+    content = re.sub(r'```\w*\s*', '', content)  # Any language tag
     content = content.strip()
-
-    # Find JSON
+    
+    # Find JSON - try multiple patterns
+    json_match = None
+    
+    # Pattern 1: Standard JSON object
     json_match = re.search(r'\{[\s\S]*\}', content)
+    
+    # Pattern 2: Look for slide_1 specifically
+    if not json_match:
+        json_match = re.search(r'\{[^{}]*"slide_1"[\s\S]*\}', content)
+    
+    # Pattern 3: Try to find balanced braces
+    if not json_match:
+        start = content.find('{')
+        if start != -1:
+            depth = 0
+            for i in range(start, len(content)):
+                if content[i] == '{': depth += 1
+                elif content[i] == '}': depth -= 1
+                if depth == 0:
+                    json_match = re.search(r'\{[\s\S]*\}', content[start:i+1])
+                    break
+    
     if not json_match:
         return None
-
+    
     try:
         data = json.loads(json_match.group())
     except json.JSONDecodeError:
-        return None
-
+        # Try to fix common issues
+        json_str = json_match.group()
+        # Remove trailing commas
+        json_str = re.sub(r',\s*}', '}', json_str)
+        json_str = re.sub(r',\s*]', ']', json_str)
+        try:
+            data = json.loads(json_str)
+        except:
+            return None
+    
     # Normalize format: convert strings to objects
     normalized = {}
     for i in range(1, 9):
@@ -801,8 +832,9 @@ def extract_json_from_content(content):
 def generate_content(article, article_content):
     """Generate Threads content via LLM with model fallback.
     
-    Primary: mimo-v2.5 (fast, good Indonesian)
-    Fallback: minimax-m3 (slower but reliable)
+    Primary: deepseek-v4-flash (fast, good JSON)
+    Fallback 1: mimo-v2.5 (good Indonesian)
+    Fallback 2: claude-sonnet-4.6 (best quality)
     """
     system_prompt = """# ROLE
 Kamu adalah content writer ekonomi pasar Indonesia. Nada: langsung, jujur, empati ke orang kecil — bukan wartawan formal.
