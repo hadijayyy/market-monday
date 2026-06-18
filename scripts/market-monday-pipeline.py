@@ -14,6 +14,7 @@ Architecture: Pressbox v7 pattern
 Author: Hadijayyy
 Created: 17 Jun 2026
 Updated: 18 Jun 2026 — Consolidated benchmark + analytics into 1 file
+Patched: 18 Jun 2026 — Code review: 14 fixes (bugs, perf, error handling)
 """
 
 import os
@@ -22,6 +23,7 @@ import json
 import time
 import re
 import html
+import subprocess
 import requests
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -75,6 +77,17 @@ BENCHMARK_SOURCES = [
     {"name": "BBC Business", "url": "https://feeds.bbci.co.uk/news/business/rss.xml"},
 ]
 
+# ─── STOPWORDS (module-level, not recreated per call) ────────────────────────
+
+STOPWORDS = frozenset([
+    "the", "a", "an", "in", "on", "at", "to", "for", "of", "with", "by",
+    "as", "is", "was", "are", "were", "be", "been", "has", "have", "had",
+    "but", "or", "and", "not", "no", "so", "if", "it", "its", "this",
+    "that", "these", "those", "from", "into", "about", "between", "through",
+    "yang", "dan", "di", "ke", "dari", "ini", "itu", "untuk", "dengan",
+    "pada", "adalah", "akan", "juga", "sudah", "tidak", "bisa", "lebih",
+])
+
 # ─── SCORING KEYWORDS ────────────────────────────────────────────────────────
 
 IMPACT_CRASH = {
@@ -82,7 +95,7 @@ IMPACT_CRASH = {
     "bankruptcy", "layoff", "layoffs", "unemployment", "emergency",
     "panic", "meltdown", "turmoil", "slump", "downturn", "insolvency", "implosion",
     "anjlok", "ambruk", "jatuh", "gagal", "bangkrut", "phk", "resesi",
-    "krisis", "darurat", "panik", "merosot", "menurun"
+    "krisis", "darurat", "panik", "merosot", "menurun",
 }
 
 IMPACT_SURGE = {
@@ -91,57 +104,57 @@ IMPACT_SURGE = {
     "outperform", "beat expectations", "strongest",
     "kenaikan", "meningkat", "melambung", "meroket", "menembus",
     "tembus", "rekor", "tertinggi", "terbesar", "pertama", "berhasil",
-    "positif", "optimistis", "pulih", "rebound"
+    "positif", "optimistis", "pulih", "rebound",
 }
 
 IMPACT_NEGATIVE = {
     "warning", "downgrade", "cut", "reduce", "slowdown", "weaken",
     "decline", "drop", "fall", "tumble", "sink", "miss", "miss expectations",
     "peringatan", "potong", "kurang", "perlambatan", "melemah",
-    "penurunan", "merosot", "gagal", "meleset"
+    "penurunan", "merosot", "gagal", "meleset",
 }
 
 URGENCY_HIGH = {
     "breaking", "just in", "alert", "emergency", "urgent", "flash",
-    "terbaru", "baru", "mendesak", "darurat", "segera", "breaking news"
+    "terbaru", "baru", "mendesak", "darurat", "segera", "breaking news",
 }
 
 URGENCY_MEDIUM = {
     "today", "this week", "imminent", "announce", "reveals", "expects",
     "hari ini", "minggu ini", "akan datang", "mengumumkan", "menguak",
-    "memprediksi", "estimasi", "proyeksi"
+    "memprediksi", "estimasi", "proyeksi",
 }
 
 INDO_HIGH = {
     "rupiah", "idr", "bi rate", "bank indonesia", "suku bunga",
     "ihsg", "idx", "ojk", "beban", "emiten", "saham indonesia",
-    "jakarta", "indonesia", "pemerintah", "kementerian"
+    "jakarta", "indonesia", "pemerintah", "kementerian",
 }
 
 INDO_MEDIUM = {
     "komoditas", "batu bara", "nikel", "cpo", "kelapa sawit",
-    "tembaga", "emas", "minyak mentah", "lng", "palm oil"
+    "tembaga", "emas", "minyak mentah", "lng", "palm oil",
 }
 
 INDO_LOW = {
     "asia", "asean", "singapore", "malaysia", "thailand", "vietnam",
-    "philippines", "china", "jepang", "korea"
+    "philippines", "china", "jepang", "korea",
 }
 
 BORING_KEYWORDS = {
     "quarterly report", "earnings preview", "market open", "market close",
     "trading update", "dividend announcement", "annual report",
-    "regulatory filing", "proxy statement"
+    "regulatory filing", "proxy statement",
 }
 
 OPINION_KEYWORDS = {
     "opinion", "analysis", "column", "editorial", "commentary",
-    "perspective", "viewpoint", "says analyst", "expert says"
+    "perspective", "viewpoint", "says analyst", "expert says",
 }
 
 VIDEO_KEYWORDS = {
     "video", "watch", "nonton", "tonton", "footage", "clip",
-    "livestream", "live streaming", "replay"
+    "livestream", "live streaming", "replay",
 }
 
 VIRAL_FACTORS = {
@@ -154,7 +167,7 @@ VIRAL_FACTORS = {
     "record_milestone": ["record", "history", "milestone", "first ever",
                          "highest", "terbesar", "tertinggi", "pertama"],
     "geopolitical": ["war", "conflict", "sanction", "tariff", "ban",
-                     "perang", "konflik", "sanksi"]
+                     "perang", "konflik", "sanksi"],
 }
 
 TOPIC_PATTERNS = {
@@ -170,6 +183,23 @@ TOPIC_PATTERNS = {
     "energi": ["energi", "energy", "listrik", "pln", "bbm", "subsidi"],
     "global_event": ["perang", "war", "konflik", "conflict", "sanction", "g7", "g20", "imf"],
 }
+
+# ─── ECONOMIC KEYWORDS (module-level, not recreated per score_candidate) ─────
+
+ECONOMIC_KEYWORDS = [
+    "harga", "saham", "ihsg", "idx", "rupiah", "dollar", "bi rate", "suku bunga",
+    "inflasi", "ekonomi", "pasar", "investasi", "komoditas", "cpo", "sawit",
+    "pertambangan", "energi", "listrik", "bbm", "pertamax", "solar", "industri",
+    "manufaktur", "ekspor", "impor", "neraca", "defisit", "surplus", "utang",
+    "kredit", "pinjaman", "bank", "ojk", "emiten", "dividen", "laba", "rugi",
+    "phk", "pekerja", "gaji", "upah", "tunjangan", "perpajakan", "pajak",
+    "reksadana", "obligasi", "deposito", "asuransi", "properti", "rumah", "kpr",
+    "kripto", "bitcoin", "ethereum", "blockchain", "startup", "fintech", "digital",
+    "pemerintah", "kementerian", "regulasi", "kebijakan", "apbn", "apbd",
+    "cadangan devisa", "balance of payment", "gdp", "pdb", "pertumbuhan",
+    "resesi", "stagnasi", "perlambatan", "pemulihan", "rebound", "rally",
+    "anomali", "manipulasi", "korupsi", "skandal", "penipuan", "gelap",
+]
 
 # ─── HELPER FUNCTIONS ────────────────────────────────────────────────────────
 
@@ -206,35 +236,38 @@ def log(msg, level="INFO"):
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] [{level}] {msg}", file=sys.stderr)
 
+def get_time_slot(hour):
+    """Convert hour (0-23) to WIB time slot name. Shared by scoring + analytics."""
+    if 6 <= hour < 10:
+        return "pagi (06-10)"
+    elif 10 <= hour < 14:
+        return "siang (10-14)"
+    elif 14 <= hour < 18:
+        return "sore (14-18)"
+    elif 18 <= hour < 22:
+        return "malam (18-22)"
+    else:
+        return "dini hari (22-06)"
+
 def alert_telegram(msg):
-    """Send alert to Telegram."""
+    """Send alert to Telegram via requests (no subprocess, avoids exposing token in ps)."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("ALERT_CHAT", "")
-    if token and chat_id:
-        try:
-            import subprocess
-            subprocess.run([
-                "curl", "-s", "-X", "POST",
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                "-d", f"chat_id={chat_id}",
-                "-d", f"text=📈 Market Monday: {msg}",
-                "-d", "parse_mode=HTML"
-            ], timeout=10, capture_output=True)
-        except:
-            pass
+    if not (token and chat_id):
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data={"chat_id": chat_id, "text": f"📈 Market Monday: {msg}", "parse_mode": "HTML"},
+            timeout=10,
+        )
+    except requests.RequestException:
+        pass
 
 # ─── TITLE SIMILARITY DEDUP (Jaccard) ───────────────────────────────────────
 
 def clean_words(text):
     """Clean text for similarity comparison."""
-    STOPWORDS = frozenset([
-        "the", "a", "an", "in", "on", "at", "to", "for", "of", "with", "by",
-        "as", "is", "was", "are", "were", "be", "been", "has", "have", "had",
-        "but", "or", "and", "not", "no", "so", "if", "it", "its", "this",
-        "that", "these", "those", "from", "into", "about", "between", "through",
-        "yang", "dan", "di", "ke", "dari", "ini", "itu", "untuk", "dengan",
-        "pada", "adalah", "akan", "juga", "sudah", "tidak", "bisa", "lebih"
-    ])
     text = text.lower()
     text = re.sub(r'[^\w\s]', ' ', text)
     words = text.split()
@@ -297,22 +330,12 @@ def apply_topic_boost(score, title, feedback):
     return score + total_boost
 
 def apply_time_boost(score, feedback):
-    """Apply time-of-day boost from analytics feedback."""
+    """Apply time-of-day boost from analytics feedback. Uses WIB timezone."""
     if not feedback or "time_boosts" not in feedback:
         return score
 
-    current_hour = datetime.now().hour
-
-    if 6 <= current_hour < 10:
-        slot = "pagi (06-10)"
-    elif 10 <= current_hour < 14:
-        slot = "siang (10-14)"
-    elif 14 <= current_hour < 18:
-        slot = "sore (14-18)"
-    elif 18 <= current_hour < 22:
-        slot = "malam (18-22)"
-    else:
-        slot = "dini hari (22-06)"
+    current_hour = datetime.now(WIB).hour  # FIX: was datetime.now().hour (server tz)
+    slot = get_time_slot(current_hour)
 
     if slot in feedback["time_boosts"]:
         boost_pct = feedback["time_boosts"][slot].get("boost_pct", 0)
@@ -341,30 +364,28 @@ def extract_image_from_html(html_content):
 
 def extract_image(url):
     """Extract article image with 3-method fallback chain."""
-    import subprocess
     try:
         r = subprocess.run(
             ["curl", "-sL", "--max-time", "8",
              "-A", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
              url],
-            capture_output=True, text=True, timeout=12
+            capture_output=True, text=True, timeout=12,
         )
         return extract_image_from_html(r.stdout)
-    except:
+    except (subprocess.TimeoutExpired, OSError):
         return None
 
 # ─── RSS SCRAPING ────────────────────────────────────────────────────────────
 
 def scrape_rss(url, source_name):
     """Scrape RSS feed and return list of articles."""
-    import subprocess
     articles = []
     try:
         result = subprocess.run(
             ["curl", "-sL", "--max-time", "15",
              "-A", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
              url],
-            capture_output=True, text=True, timeout=20
+            capture_output=True, text=True, timeout=20,
         )
         if result.returncode != 0:
             log(f"RSS fetch failed: {source_name}", "WARN")
@@ -399,7 +420,7 @@ def scrape_rss(url, source_name):
                     "url": link,
                     "description": desc,
                     "source": source_name,
-                    "published": pub_date
+                    "published": pub_date,
                 })
 
         log(f"Scraped {len(articles)} articles from {source_name}")
@@ -440,8 +461,8 @@ def is_fresh(pub_date_str, hours=24):
         now = datetime.now(timezone.utc)
         age = now - pub_date
         return age.total_seconds() < hours * 3600
-    except:
-        return True
+    except (ValueError, TypeError, OverflowError):
+        return True  # conservative: assume fresh if we can't parse
 
 def score_candidate(article, posted, feedback):
     """Score article with 7-layer scoring system."""
@@ -455,21 +476,6 @@ def score_candidate(article, posted, feedback):
     if not is_fresh(article.get("published", ""), hours=24):
         return -500
 
-    ECONOMIC_KEYWORDS = [
-        "harga", "saham", "ihsg", "idx", "rupiah", "dollar", "bi rate", "suku bunga",
-        "inflasi", "ekonomi", "pasar", "investasi", "komoditas", "cpo", "sawit",
-        "pertambangan", "energi", "listrik", "bbm", "pertamax", "solar", "industri",
-        "manufaktur", "ekspor", "impor", "neraca", "defisit", "surplus", "utang",
-        "kredit", "pinjaman", "bank", "ojk", "emiten", "dividen", "laba", "rugi",
-        "phk", "pekerja", "gaji", "upah", "tunjangan", "perpajakan", "pajak",
-        "reksadana", "obligasi", "deposito", "asuransi", "properti", "rumah", "kpr",
-        "kripto", "bitcoin", "ethereum", "blockchain", "startup", "fintech", "digital",
-        "pemerintah", "kementerian", "regulasi", "kebijakan", "apbn", "apbd",
-        "cadangan devisa", "balance of payment", "gdp", "pdb", "pertumbuhan",
-        "resesi", "stagnasi", "perlambatan", "pemulihan", "rebound", "rally",
-        "anomali", "manipulasi", "korupsi", "skandal", "penipuan", "gelap"
-    ]
-    
     has_economic_keyword = any(kw in combined for kw in ECONOMIC_KEYWORDS)
     if not has_economic_keyword:
         return -200
@@ -557,7 +563,10 @@ def score_candidate(article, posted, feedback):
     return score
 
 def select_best_candidate(articles, posted, feedback, posted_titles=None):
-    """Select the best article with feedback boosts + title dedup."""
+    """Select the best article with feedback boosts + title dedup.
+
+    Returns (article, score) tuple to avoid re-scoring in pipeline.
+    """
     scored = []
     skipped_similar = 0
 
@@ -574,19 +583,17 @@ def select_best_candidate(articles, posted, feedback, posted_titles=None):
         log(f"[DEDUP] Skipped {skipped_similar} similar titles")
 
     if not scored:
-        return None
+        return None, 0
 
     scored.sort(key=lambda x: x[0], reverse=True)
     best_score, best_article = scored[0]
     log(f"Best candidate: {best_article['title']} (score: {best_score:.1f})")
-    return best_article
+    return best_article, best_score
 
 # ─── CONTENT EXTRACTION ──────────────────────────────────────────────────────
 
 def extract_article_content(url):
     """Extract article content using 3-method chain."""
-    import subprocess
-
     try:
         import newspaper
         article = newspaper.Article(url)
@@ -605,7 +612,7 @@ def extract_article_content(url):
             ["curl", "-sL", "--max-time", "10",
              "-A", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
              url],
-            capture_output=True, text=True, timeout=15
+            capture_output=True, text=True, timeout=15,
         )
         html_content = result.stdout
 
@@ -637,16 +644,16 @@ def extract_article_content(url):
 
 def call_llm(system_prompt, user_prompt, model):
     """Call LLM API with system + user prompt split."""
-    load_env()
     api_key = os.environ.get("OPENCODE_GO_API_KEY", "")
 
     if not api_key:
         log("No API key found", "ERROR")
         return None, None
 
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
 
     payload = {
         "model": model,
@@ -657,12 +664,12 @@ def call_llm(system_prompt, user_prompt, model):
         "max_tokens": LLM_MAX_TOKENS,
         "temperature": 0.8,
         "reasoning_effort": "low",
-        "stream": True
+        "stream": True,
     }
 
     try:
         r = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=LLM_TIMEOUT, stream=True)
-        
+
         if r.status_code != 200:
             log(f"LLM API error ({model}): HTTP {r.status_code}", "ERROR")
             return None, None
@@ -713,28 +720,30 @@ def extract_json_from_content(content):
     content = re.sub(r'```\s*$', '', content)
     content = re.sub(r'```\w*\s*', '', content)
     content = content.strip()
-    
+
     json_match = None
-    
+
     json_match = re.search(r'\{[\s\S]*\}', content)
-    
+
     if not json_match:
         json_match = re.search(r'\{[^{}]*"slide_1"[\s\S]*\}', content)
-    
+
     if not json_match:
         start = content.find('{')
         if start != -1:
             depth = 0
             for i in range(start, len(content)):
-                if content[i] == '{': depth += 1
-                elif content[i] == '}': depth -= 1
+                if content[i] == '{':
+                    depth += 1
+                elif content[i] == '}':
+                    depth -= 1
                 if depth == 0:
                     json_match = re.search(r'\{[\s\S]*\}', content[start:i+1])
                     break
-    
+
     if not json_match:
         return None
-    
+
     try:
         data = json.loads(json_match.group())
     except json.JSONDecodeError:
@@ -743,9 +752,9 @@ def extract_json_from_content(content):
         json_str = re.sub(r',\s*]', ']', json_str)
         try:
             data = json.loads(json_str)
-        except:
+        except (json.JSONDecodeError, ValueError):
             return None
-    
+
     normalized = {}
     for i in range(1, 9):
         key = f"slide_{i}"
@@ -758,16 +767,20 @@ def extract_json_from_content(content):
                     normalized[key] = {"hook": "", "content": val}
             elif isinstance(val, dict):
                 normalized[key] = val
-    
+
     if len(normalized) >= 6:
         return normalized
     return None
 
 def extract_json_from_reasoning(reasoning):
-    """Extract JSON from reasoning content (Strategy 1 + 2)."""
+    """Extract JSON from reasoning content (Strategy 1 + 2).
+
+    FIX: Strategy 2 now limits to last 20 closing braces to prevent O(n²) hang.
+    """
     if not reasoning:
         return None
-    
+
+    # Strategy 1: Find JSON with slide markers
     for marker in ["slide_1", "slides"]:
         idx = 0
         while idx < len(reasoning):
@@ -777,8 +790,10 @@ def extract_json_from_reasoning(reasoning):
             depth = 0
             end = -1
             for i in range(start, len(reasoning)):
-                if reasoning[i] == '{': depth += 1
-                elif reasoning[i] == '}': depth -= 1
+                if reasoning[i] == '{':
+                    depth += 1
+                elif reasoning[i] == '}':
+                    depth -= 1
                 if depth == 0:
                     end = i
                     break
@@ -804,12 +819,19 @@ def extract_json_from_reasoning(reasoning):
             except json.JSONDecodeError:
                 pass
             idx = end + 1
-    
+
+    # Strategy 2: Scan backward for last valid JSON (capped at 20 closing braces)
     log("   Strategy 2: scanning for last valid JSON with content...")
     best_json = ""
     best_score = 0
-    for i in range(len(reasoning) - 1, max(len(reasoning) - 50000, -1), -1):
+    closing_braces_seen = 0
+    MAX_BRACES = 20  # FIX: cap iterations to prevent O(n²) hang
+
+    for i in range(len(reasoning) - 1, -1, -1):
         if reasoning[i] == '}':
+            closing_braces_seen += 1
+            if closing_braces_seen > MAX_BRACES:
+                break
             for j in range(i, max(i - 15000, -1), -1):
                 if reasoning[j] == '{':
                     try:
@@ -824,18 +846,18 @@ def extract_json_from_reasoning(reasoning):
                             if total_content > best_score:
                                 best_score = total_content
                                 best_json = reasoning[j:i+1]
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, ValueError):
                         pass
             if best_json:
                 break
-    
+
     if best_json and best_score > 500:
         log(f"   Strategy 2: Found JSON ({len(best_json)}c, score={best_score})")
         return extract_json_from_content(best_json)
     elif best_json:
         log(f"   Strategy 2: Found JSON but low score ({best_score}), trying anyway...")
         return extract_json_from_content(best_json)
-    
+
     return None
 
 def generate_content(article, article_content):
@@ -917,55 +939,60 @@ ARTIKEL:
         models_to_try = LLM_MODELS
 
     MAX_HOOK_RETRIES = 2
-    
+
     for model in models_to_try:
         for attempt in range(MAX_HOOK_RETRIES):
             log(f"[LLM] Trying model: {model} (attempt {attempt + 1})")
             content, reasoning = call_llm(system_prompt, user_prompt, model)
 
             if content or reasoning:
-                save_json(RAW_OUTPUT_FILE, {"content": content, "reasoning": reasoning[:2000] if reasoning else "", "model": model, "timestamp": datetime.now().isoformat()})
+                save_json(RAW_OUTPUT_FILE, {
+                    "content": content,
+                    "reasoning": reasoning[:2000] if reasoning else "",
+                    "model": model,
+                    "timestamp": datetime.now().isoformat(),
+                })
 
                 slides_data = None
                 if content:
                     slides_data = extract_json_from_content(content)
                 if not slides_data and reasoning:
-                    log(f"[LLM] Content empty, extracting from reasoning...")
+                    log("[LLM] Content empty, extracting from reasoning...")
                     slides_data = extract_json_from_reasoning(reasoning)
-                
+
                 if slides_data:
                     hook = slides_data.get("slide_1", {}).get("hook", "") or slides_data.get("slide_1", {}).get("content", "")
                     is_valid, issues = validate_hook(hook)
-                    
+
                     if is_valid:
                         sentences_valid, sentence_issues = validate_slide_sentences(slides_data)
-                        
+
                         if sentences_valid:
                             grounding_valid, grounding_issues = validate_grounding(slides_data, article_content)
-                            
+
                             if grounding_valid:
                                 log(f"[LLM] ✅ Success with {model} - Hook valid: {hook[:50]}...")
                                 return slides_data
                             else:
                                 log(f"[LLM] ⚠️ Grounding issues: {', '.join(grounding_issues)}", "WARN")
                                 if attempt < MAX_HOOK_RETRIES - 1:
-                                    log(f"[LLM] Retrying with same model...")
+                                    log("[LLM] Retrying with same model...")
                                 continue
                         else:
                             sentence_info = ", ".join(sentence_issues)
                             log(f"[LLM] ⚠️ Sentence count: {sentence_info}", "WARN")
                             if attempt < MAX_HOOK_RETRIES - 1:
-                                log(f"[LLM] Retrying with same model...")
+                                log("[LLM] Retrying with same model...")
                             continue
                     else:
                         log(f"[LLM] ⚠️ Hook invalid: {', '.join(issues)}", "WARN")
                         if attempt < MAX_HOOK_RETRIES - 1:
-                            log(f"[LLM] Retrying with same model...")
+                            log("[LLM] Retrying with same model...")
                         continue
                 else:
                     log(f"[LLM] ❌ JSON parse failed for {model}", "WARN")
                     break
-    
+
     log("[LLM] ❌ All models failed (hook validation failed or parse error)", "ERROR")
     return None
 
@@ -975,22 +1002,22 @@ def add_smart_whitespace(content):
     protected = content
     for abbr in abbreviations:
         protected = protected.replace(f'{abbr}.', f'{abbr}[[DOT]]')
-    
+
     sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', protected)
-    
+
     restored = [sent.replace('[[DOT]]', '.') for sent in sentences]
-    
+
     return '\n\n'.join(restored)
 
 def validate_hook(hook):
     """Validate that hook has all 3 required elements: ANGKA + KONTEKST + DRAMA."""
     issues = []
-    
+
     has_angka = bool(re.search(r'\d+', hook))
     if not has_angka:
         issues.append("GAK ADA ANGKA SPESIFIK")
-    
-    konteks_words = ['gaji', 'harga', 'sembako', 'BBM', 'rumah', 'IHSG', 'saham', 'investasi', 
+
+    konteks_words = ['gaji', 'harga', 'sembako', 'BBM', 'rumah', 'IHSG', 'saham', 'investasi',
                      'properti', 'KPR', 'cicilan', 'pangan', 'beras', 'minyak', 'energi',
                      'ekonomi', 'pasar', 'defisit', 'inflasi', 'suku bunga', 'BI rate',
                      'ekspor', 'impor', 'neraca', 'komoditas', 'kripto', 'dollar',
@@ -1010,8 +1037,8 @@ def validate_hook(hook):
     has_konteks = any(word.lower() in hook.lower() for word in konteks_words)
     if not has_konteks:
         issues.append("GAK ADA KONTEKST YANG JELAS")
-    
-    # Drama words — expanded list
+
+    # FIX: removed leading spaces from 'lumpuh', 'kontroversi', 'sorotan'
     drama_words = ['naik', 'turun', 'anjlok', 'meledak', 'ambruk', 'jatuh', 'rally',
                    'kosong', 'langka', 'mahal', 'murah', 'sesak', 'miskin', 'kaya',
                    'phk', 'tutup', 'bangkrut', 'gagal', 'guncang', 'terancam',
@@ -1021,18 +1048,18 @@ def validate_hook(hook):
                    'darah', 'berdarah', 'runtuh', 'hancur',
                    'panik', 'ketakutan', 'gejolak', 'krisis', 'darurat',
                    'perang', 'konflik', 'sanksi', 'larang', 'blokir',
-                   # EXTRA DRAMA — more words for better pass rate
+                   # EXTRA DRAMA
                    'merugi', 'rugi', 'anjlok', 'merosot', 'terpuruk', 'terperosok',
                    'sengsara', 'menderita', 'susah', 'kesulitan', 'ketergantungan',
-                   'ancaman', 'bahaya', 'risiko', 'padam', 'mati', ' lumpuh',
+                   'ancaman', 'bahaya', 'risiko', 'padam', 'mati', 'lumpuh',
                    'kolaps', 'gulung tikar', 'tutup operasi', 'hentikan',
                    'tinggalkan', 'kabur', 'melarikan', 'lari', 'menghilang',
-                   'publik', 'heboh', 'viral', 'ramai', 'polemik', ' kontroversi',
-                   'sorot', ' sorotan', 'perhatian', 'fokus', 'gebrakan', 'kejutan']
+                   'publik', 'heboh', 'viral', 'ramai', 'polemik', 'kontroversi',
+                   'sorot', 'sorotan', 'perhatian', 'fokus', 'gebrakan', 'kejutan']
     has_drama = any(word.lower() in hook.lower() for word in drama_words)
     if not has_drama:
         issues.append("GAK ADA DRAMA/EMOSI")
-    
+
     is_valid = len(issues) == 0
     return is_valid, issues
 
@@ -1047,7 +1074,7 @@ def count_sentences(text):
 def validate_slide_sentences(slides_data):
     """Validate sentence counts per slide (+1 tolerance)."""
     issues = []
-    
+
     slide1 = slides_data.get('slide_1', {})
     hook = slide1.get('hook', '') if isinstance(slide1, dict) else ''
     content = slide1.get('content', '') if isinstance(slide1, dict) else ''
@@ -1057,7 +1084,7 @@ def validate_slide_sentences(slides_data):
         issues.append(f"slide_1: {sentences} sentences (need 2-3)")
     elif sentences > 4:
         issues.append(f"slide_1: {sentences} sentences (need 2-3)")
-    
+
     for i in range(2, 8):
         slide = slides_data.get(f'slide_{i}', {})
         content = slide.get('content', '') if isinstance(slide, dict) else ''
@@ -1068,7 +1095,7 @@ def validate_slide_sentences(slides_data):
             issues.append(f"slide_{i}: {sentences} sentences (need 3-4)")
         elif sentences > 5:
             issues.append(f"slide_{i}: {sentences} sentences (need 3-4)")
-    
+
     slide8 = slides_data.get('slide_8', {})
     content = slide8.get('content', '') if isinstance(slide8, dict) else ''
     hook = slide8.get('hook', '') if isinstance(slide8, dict) else ''
@@ -1078,25 +1105,25 @@ def validate_slide_sentences(slides_data):
         issues.append(f"slide_8: {sentences} sentences (need 2-3)")
     elif sentences > 4:
         issues.append(f"slide_8: {sentences} sentences (need 2-3)")
-    
+
     is_valid = len(issues) == 0
     return is_valid, issues
 
 def validate_grounding(slides_data, article_text):
     """Validate that every factual claim in slides appears in the article."""
     issues = []
-    
+
     article_numbers = set(re.findall(r'(?<![/\w])\d[\d.,]*\d(?![//\w])', article_text))
-    
+
     for i in range(1, 9):
         slide_key = f"slide_{i}"
         slide = slides_data.get(slide_key, {})
-        
+
         hook = slide.get('hook', '') if isinstance(slide, dict) else ''
         content = slide.get('content', '') if isinstance(slide, dict) else ''
         slide_text = (hook + ' ' + content).lower()
-        
-        slide_numbers = set(re.findall(r'(?<![/\w-])\d[\d.,]*\d(?![/\w-])', slide_text))
+
+        slide_numbers = set(re.findall(r'(?<![/\w-])\d[\d.,]*\d(?![/\\w-])', slide_text))
         for num in slide_numbers:
             if num not in article_numbers and len(num) > 1:
                 if len(num.replace('.', '').replace(',', '')) > 6:
@@ -1104,9 +1131,9 @@ def validate_grounding(slides_data, article_text):
                 try:
                     float(num.replace(',', '.'))
                     issues.append(f"slide_{i}: Number '{num}' not found in article")
-                except:
+                except (ValueError, TypeError):
                     pass
-    
+
     passed = len(issues) == 0
     return passed, issues
 
@@ -1117,7 +1144,7 @@ def format_slides(slides_data):
         key = f"slide_{i}"
         if key in slides_data:
             slide = slides_data[key]
-            
+
             if i == 1:
                 hook = slide.get("hook", "") or slide.get("title", "") or slide.get("content", "")
                 hook = hook.replace('—', ', ').replace('–', ', ')
@@ -1133,8 +1160,6 @@ def format_slides(slides_data):
 
 def post_to_threads(staging_data):
     """Post slides to Threads using Press Box direct-post.py."""
-    import subprocess
-
     if not THREADS_SCRIPT.exists():
         log("[POST] Press Box direct-post.py not found - skipping auto-post", "WARN")
         return False, None, None
@@ -1143,7 +1168,7 @@ def post_to_threads(staging_data):
     for i, slide in enumerate(staging_data['slides'], 1):
         hook = slide.get('hook', '')
         content = slide.get('content', '')
-        
+
         if i == 1 and hook:
             md_content += f"{hook}\n\n---\n\n"
         elif content:
@@ -1154,14 +1179,14 @@ def post_to_threads(staging_data):
 
     try:
         cmd = ["python3", str(THREADS_SCRIPT), "--file", str(temp_file)]
-        
+
         image_url = staging_data.get("image_url", "")
         if image_url:
             cmd.extend(["--image", image_url])
             log(f"[POST] 📷 Attaching image: {image_url[:60]}...")
 
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=120
+            cmd, capture_output=True, text=True, timeout=120,
         )
 
         output = result.stdout
@@ -1178,7 +1203,7 @@ def post_to_threads(staging_data):
             log(f"[POST] ✅ Posted to Threads: {permalink}")
             return True, root_id, permalink
         else:
-            log(f"[POST] ❌ No root post ID found", "ERROR")
+            log("[POST] ❌ No root post ID found", "ERROR")
             log(f"[POST] Output: {output[:200]}")
             return False, None, None
 
@@ -1206,8 +1231,8 @@ def update_analytics(staging_data, root_id=None, permalink=None):
             "likes": 0,
             "replies": 0,
             "shares": 0,
-            "views": 0
-        }
+            "views": 0,
+        },
     }
 
     posted[staging_data["url"]] = entry
@@ -1237,20 +1262,19 @@ def benchmark_extract_full_text(url):
             "success": True,
             "length": len(text),
             "preview": text[:200] + "..." if len(text) > 200 else text,
-            "has_content": len(text) > 500
+            "has_content": len(text) > 500,
         }
     except Exception as e:
         return {"success": False, "error": str(e), "length": 0, "preview": "", "has_content": False}
 
 def benchmark_extract_image(url):
     """Extract og:image URL and check resolution (for benchmark)."""
-    import subprocess
     try:
         result = subprocess.run(
             ["curl", "-sL", "--max-time", "8",
              "-A", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
              url],
-            capture_output=True, text=True, timeout=12
+            capture_output=True, text=True, timeout=12,
         )
         html_content = result.stdout
 
@@ -1269,7 +1293,7 @@ def benchmark_extract_image(url):
                         "success": True,
                         "url": image_url[:100] + "..." if len(image_url) > 100 else image_url,
                         "full_url": image_url,
-                        "is_hd": "1024" in image_url or "1200" in image_url or "1920" in image_url
+                        "is_hd": "1024" in image_url or "1200" in image_url or "1920" in image_url,
                     }
 
         return {"success": False, "error": "No image found", "url": "", "full_url": "", "is_hd": False}
@@ -1286,7 +1310,7 @@ def benchmark_source(source):
     articles = scrape_rss(source['url'], source['name'])
 
     if not articles:
-        print(f"  ❌ No articles found")
+        print("  ❌ No articles found")
         return {"source": source['name'], "rss_ok": False, "articles": 0}
 
     print(f"  ✅ Found {len(articles)} articles")
@@ -1319,7 +1343,7 @@ def benchmark_source(source):
         "rss_ok": True,
         "articles": len(articles),
         "full_text": text_result,
-        "image": image_result
+        "image": image_result,
     }
 
 def run_benchmark():
@@ -1370,7 +1394,7 @@ def analytics_fetch_recent_posts(tok, uid, limit=20):
         r = httpx.get(
             f"https://graph.threads.net/v1.0/{uid}/threads",
             params={"access_token": tok, "fields": "id,text,timestamp", "limit": limit},
-            timeout=15
+            timeout=15,
         )
         return r.json().get("data", [])
     except Exception as e:
@@ -1386,15 +1410,15 @@ def analytics_fetch_engagement(tok, post_id):
             params={
                 "access_token": tok,
                 "metric": "likes,replies,reposts,views,quotes",
-                "period": "lifetime"
+                "period": "lifetime",
             },
-            timeout=10
+            timeout=10,
         )
         metrics = {"likes": 0, "replies": 0, "reposts": 0, "views": 0, "quotes": 0}
         for item in r.json().get("data", []):
             metrics[item["name"]] = item["values"][0]["value"]
         return metrics
-    except:
+    except (requests.RequestException, KeyError, IndexError):
         return {"likes": 0, "replies": 0, "reposts": 0, "views": 0, "quotes": 0}
 
 def analytics_calc_score(m):
@@ -1405,21 +1429,8 @@ def analytics_to_wib_hour(ts):
     """Convert timestamp to WIB hour."""
     try:
         return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(WIB).hour
-    except:
+    except (ValueError, TypeError):
         return 12
-
-def analytics_get_time_slot(hour):
-    """Group hours into time slots."""
-    if 6 <= hour < 10:
-        return "pagi (06-10)"
-    elif 10 <= hour < 14:
-        return "siang (10-14)"
-    elif 14 <= hour < 18:
-        return "sore (14-18)"
-    elif 18 <= hour < 22:
-        return "malam (18-22)"
-    else:
-        return "dini hari (22-06)"
 
 def run_analytics():
     """Run analytics — fetch engagement, generate feedback + report."""
@@ -1457,7 +1468,7 @@ def run_analytics():
                 "metrics": metrics,
                 "score": analytics_calc_score(metrics),
                 "wib_hour": wib_hour,
-                "time_slot": analytics_get_time_slot(wib_hour),
+                "time_slot": get_time_slot(wib_hour),  # FIX: shared utility
             })
 
     enriched.sort(key=lambda x: x["score"], reverse=True)
@@ -1666,7 +1677,8 @@ def run_pipeline():
 
     log(f"Total articles scraped: {len(articles)}")
 
-    best = select_best_candidate(articles, posted_urls, feedback, posted_titles)
+    # FIX: select_best_candidate now returns (article, score) tuple
+    best, best_score = select_best_candidate(articles, posted_urls, feedback, posted_titles)
 
     if not best:
         log("No suitable candidate found", "WARN")
@@ -1705,10 +1717,10 @@ def run_pipeline():
         "title": best["title"],
         "url": best["url"],
         "source": best["source"],
-        "score": score_candidate(best, posted_urls, feedback),
+        "score": best_score,  # FIX: reuse score from selection, no re-computation
         "slides": slides,
         "image_url": image_url or "",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
     }
 
     save_json(STAGING_FILE, staging_data)
@@ -1741,7 +1753,7 @@ def run_pipeline():
         print(f"✅ Pipeline complete: {best['title']} ({len(slides)} slides)")
         print(f"🔗 {permalink}")
     else:
-        log(f"⚠️ Pipeline complete (not posted to Threads)")
+        log("⚠️ Pipeline complete (not posted to Threads)")
         print(f"⚠️ Pipeline complete (staging only): {best['title']} ({len(slides)} slides)")
 
     return True
@@ -1756,16 +1768,19 @@ if __name__ == "__main__":
     parser.add_argument("--analytics", action="store_true", help="Fetch engagement, update feedback")
     parser.add_argument("--model", type=str, help="Force specific LLM model")
     args = parser.parse_args()
-    
+
     DRY_RUN = args.dry_run
     FORCE_MODEL = args.model
-    
+
+    # FIX: load env once at startup, not on every LLM call
+    load_env()
+
     if DRY_RUN:
         log("🏃 DRY RUN MODE - will NOT post to Threads")
-    
+
     if FORCE_MODEL:
         log(f"🎯 FORCE MODEL: {FORCE_MODEL}")
-    
+
     try:
         if args.benchmark:
             run_benchmark()
