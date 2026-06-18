@@ -1,22 +1,19 @@
 #!/usr/bin/env python3
 """
-MARKET MONDAY Pipeline - Threads Personal Branding Automation
+MARKET MONDAY Pipeline — All-in-One
 Niche: Economics & Market for Indonesian Professionals
 
-Architecture reference: Press Box v7
-Analytics feedback: market_feedback.json (iterative loop)
+Modes:
+  (default)      Scrape → Score → LLM → Post
+  --benchmark    Test RSS sources quality
+  --analytics    Fetch engagement, update feedback
+  --dry-run      Skip posting to Threads
+  --model X      Force specific model
 
-Flow:
-1. Scrape RSS (BBC, CNBC)
-2. Filter (URL dedup + Title similarity)
-3. Score candidates (7-layer scoring system)
-4. LLM generate 8 slides (with model fallback)
-5. Auto-post to Threads
-6. Track engagement
-
+Architecture: Pressbox v7 pattern
 Author: Hadijayyy
 Created: 17 Jun 2026
-Updated: 17 Jun 2026 - 6 optimizations implemented
+Updated: 18 Jun 2026 — Consolidated benchmark + analytics into 1 file
 """
 
 import os
@@ -33,116 +30,120 @@ from pathlib import Path
 DATA_DIR = Path.home() / ".hermes" / "market_monday"
 SCRIPTS_DIR = Path.home() / ".hermes" / "scripts"
 ENV_FILE = Path.home() / ".hermes" / ".env"
+TOKEN_PATH = Path.home() / ".hermes" / "threads_token.json"
 
 STAGING_FILE = DATA_DIR / "staging.json"
 POSTED_FILE = DATA_DIR / "posted_topics.json"
 FEEDBACK_FILE = DATA_DIR / "market_feedback.json"
 RAW_OUTPUT_FILE = DATA_DIR / "raw_llm_output.txt"
 LATEST_FILE = DATA_DIR / "latest.md"
-TITLE_CACHE_FILE = DATA_DIR / "title_cache.json"  # For Jaccard dedup
+TITLE_CACHE_FILE = DATA_DIR / "title_cache.json"
+BENCHMARK_FILE = DATA_DIR / "benchmark_results.json"
+REPORT_FILE = DATA_DIR / "market_analytics_report.md"
 
-# LLM CONFIG - mimo-v2.5 primary (clean JSON), deepseek v4-flash fallback
+# LLM CONFIG
 LLM_API_URL = "https://opencode.ai/zen/go/v1/chat/completions"
-LLM_MODELS = ["deepseek-v4-flash", "mimo-v2.5", "claude-sonnet-4.6"]  # Primary → Fallback → Fallback
-DRY_RUN = False  # Set to True via --dry-run flag
-LLM_MAX_TOKENS = 6000  # Cap at 6K like Pressbox (was 4K)
-LLM_TIMEOUT = 90  # 90s per model (increased for retries)
+LLM_MODELS = ["deepseek-v4-flash", "mimo-v2.5"]  # Removed claude-sonnet-4.6 (not available)
+DRY_RUN = False
+FORCE_MODEL = None  # --model override
+LLM_MAX_TOKENS = 6000
+LLM_TIMEOUT = 90
 
-# SIMILARITY CONFIG (from Press Box)
-SIMILARITY_THRESHOLD = 0.35  # Jaccard similarity threshold for dedup
+# SIMILARITY
+SIMILARITY_THRESHOLD = 0.35
 
-# THREADS CONFIG (for auto-post)
+# THREADS
 THREADS_SCRIPT = SCRIPTS_DIR / "pressbox-direct-post.py"
 
-# RSS SOURCES - Indonesia only (4 sources tested & working)
+# WIB timezone
+WIB = timezone(timedelta(hours=7))
+
+# RSS SOURCES
 RSS_SOURCES = [
     {"name": "CNBC Indonesia", "url": "https://www.cnbcindonesia.com/rss", "type": "rss"},
     {"name": "Detik Finance", "url": "https://finance.detik.com/rss", "type": "rss"},
     {"name": "IDX Channel", "url": "https://www.idxchannel.com/rss", "type": "rss"},
 ]
 
-# ─── SCORING KEYWORDS ────────────────────────────────────────────────────────
-# ══════════════════════════════════════════════════════════════════════════════
-# SCORING SYSTEM - Adapted from Press Box (Football) → Market Monday (Finance)
-# ══════════════════════════════════════════════════════════════════════════════
+# BENCHMARK RSS SOURCES (for --benchmark mode)
+BENCHMARK_SOURCES = [
+    {"name": "CNBC Indonesia", "url": "https://www.cnbcindonesia.com/rss"},
+    {"name": "Detik Finance", "url": "https://finance.detik.com/rss"},
+    {"name": "IDX Channel", "url": "https://www.idxchannel.com/rss"},
+    {"name": "Kontan", "url": "https://www.kontan.co.id/rss"},
+    {"name": "Bisnis.com", "url": "https://www.bisnis.com/rss"},
+    {"name": "BBC Business", "url": "https://feeds.bbci.co.uk/news/business/rss.xml"},
+]
 
-# ── LAYER 1: IMPACT KEYWORDS (market-moving news) ──────────────────────────
-IMPACT_CRASH = {          # +30 - BAD news that moves markets
+# ─── SCORING KEYWORDS ────────────────────────────────────────────────────────
+
+IMPACT_CRASH = {
     "crash", "crisis", "recession", "collapse", "plunge", "default",
     "bankruptcy", "layoff", "layoffs", "unemployment", "emergency",
     "panic", "meltdown", "turmoil", "slump", "downturn", "insolvency", "implosion",
-    # Indonesian (context-aware: avoid "turun ke jalan", "turun dari bus")
     "anjlok", "ambruk", "jatuh", "gagal", "bangkrut", "phk", "resesi",
     "krisis", "darurat", "panik", "merosot", "menurun"
 }
 
-IMPACT_SURGE = {          # +25 - GOOD news that moves markets
+IMPACT_SURGE = {
     "surge", "rally", "soar", "boom", "breakthrough", "record",
     "historic", "milestone", "all-time high", "first time", "skyrocket",
     "outperform", "beat expectations", "strongest",
-    # Indonesian (context-aware: avoid "naik kereta", "turun ke jalan")
     "kenaikan", "meningkat", "melambung", "meroket", "menembus",
     "tembus", "rekor", "tertinggi", "terbesar", "pertama", "berhasil",
     "positif", "optimistis", "pulih", "rebound"
 }
 
-IMPACT_NEGATIVE = {       # +20 - Negative but not crash-level
+IMPACT_NEGATIVE = {
     "warning", "downgrade", "cut", "reduce", "slowdown", "weaken",
     "decline", "drop", "fall", "tumble", "sink", "miss", "miss expectations",
-    # Indonesian (context-aware: avoid "turun ke jalan")
     "peringatan", "potong", "kurang", "perlambatan", "melemah",
     "penurunan", "merosot", "gagal", "meleset"
 }
 
-# ── LAYER 2: URGENCY SIGNALS (breaking > analysis) ─────────────────────────
-URGENCY_HIGH = {          # +25 - Breaking/urgent
+URGENCY_HIGH = {
     "breaking", "just in", "alert", "emergency", "urgent", "flash",
-    # Indonesian
     "terbaru", "baru", "mendesak", "darurat", "segera", "breaking news"
 }
 
-URGENCY_MEDIUM = {        # +15 - Timely
+URGENCY_MEDIUM = {
     "today", "this week", "imminent", "announce", "reveals", "expects",
-    # Indonesian
     "hari ini", "minggu ini", "akan datang", "mengumumkan", "menguak",
     "memprediksi", "estimasi", "proyeksi"
 }
 
-# ── LAYER 3: INDONESIAN RELEVANCE (local impact) ───────────────────────────
-INDO_HIGH = {             # +40 - Direct Indonesia impact
+INDO_HIGH = {
     "rupiah", "idr", "bi rate", "bank indonesia", "suku bunga",
     "ihsg", "idx", "ojk", "beban", "emiten", "saham indonesia",
     "jakarta", "indonesia", "pemerintah", "kementerian"
 }
 
-INDO_MEDIUM = {           # +25 - Commodity/resource Indonesia
+INDO_MEDIUM = {
     "komoditas", "batu bara", "nikel", "cpo", "kelapa sawit",
     "tembaga", "emas", "minyak mentah", "lng", "palm oil"
 }
 
-INDO_LOW = {              # +15 - Regional Asia
+INDO_LOW = {
     "asia", "asean", "singapore", "malaysia", "thailand", "vietnam",
     "philippines", "china", "jepang", "korea"
 }
 
-# ── LAYER 4: BORING/PENALTY (noise, not market-moving) ──────────────────────
-BORING_KEYWORDS = {       # -15 - Routine/dry reports
+BORING_KEYWORDS = {
     "quarterly report", "earnings preview", "market open", "market close",
     "trading update", "dividend announcement", "annual report",
     "regulatory filing", "proxy statement"
 }
 
-OPINION_KEYWORDS = {      # -20 - Opinion/analysis (not factual news)
+OPINION_KEYWORDS = {
     "opinion", "analysis", "column", "editorial", "commentary",
     "perspective", "viewpoint", "says analyst", "expert says"
 }
 
-VIDEO_KEYWORDS = {        # -100 - Skip video-based articles
+VIDEO_KEYWORDS = {
     "video", "watch", "nonton", "tonton", "footage", "clip",
     "livestream", "live streaming", "replay"
 }
 
-# ── LAYER 5: VIRAL FACTORS (engagement drivers) ────────────────────────────
 VIRAL_FACTORS = {
     "outrage_money": ["price", "cost", "debt", "money", "tax", "billion",
                       "trillion", "rp", "harga", "biaya", "utang", "pajak"],
@@ -156,19 +157,18 @@ VIRAL_FACTORS = {
                      "perang", "konflik", "sanksi"]
 }
 
-# ── LAYER 6: TOPIC PATTERNS (for analytics feedback boost) ─────────────────
 TOPIC_PATTERNS = {
-    "inflasi": ["inflasi", "inflation", "harga", "price", "cpi"],
-    "suku_bunga": ["suku bunga", "interest rate", "bi rate", "rate hike", "rate cut"],
-    "global_market": ["wall street", "saham", "stock", "ihsg", "idx", "rally", "crash"],
-    "currency": ["rupiah", "dollar", "yen", "forex", "nilai tukar"],
-    "komoditas": ["minyak", "oil", "emas", "gold", "batu bara", "commodity"],
-    "property": ["properti", "property", "rumah", "apartemen", "kpr"],
-    "tech_biz": ["ai", "tech", "startup", "digital", "fintech"],
-    "kebijakan": ["pajak", "tax", "regulasi", "policy", "ojk"],
-    "karir": ["karir", "career", "gaji", "salary", "phk", "layoff"],
-    "energi": ["energi", "energy", "listrik", "bbm"],
-    "global_event": ["perang", "war", "konflik", "sanction", "g7", "imf"],
+    "inflasi": ["inflasi", "inflation", "harga", "price", "cpi", "deflasi"],
+    "suku_bunga": ["suku bunga", "interest rate", "bi rate", "rate hike", "rate cut", "moneter"],
+    "global_market": ["wall street", "saham", "stock", "ihsg", "idx", "rally", "crash", "bear", "bull"],
+    "currency": ["rupiah", "dollar", "yen", "eur", "forex", "nilai tukar", "exchange rate"],
+    "komoditas": ["minyak", "oil", "emas", "gold", "batu bara", "coal", "commodity"],
+    "property": ["properti", "property", "rumah", "apartemen", "kpr", "real estate"],
+    "tech_biz": ["ai", "tech", "startup", "digital", "fintech", "e-commerce"],
+    "kebijakan": ["pajak", "tax", "regulasi", "regulation", "kebijakan", "policy", "bi", "ojk"],
+    "karir": ["karir", "career", "gaji", "salary", "phk", "layoff", "lowongan", "job"],
+    "energi": ["energi", "energy", "listrik", "pln", "bbm", "subsidi"],
+    "global_event": ["perang", "war", "konflik", "conflict", "sanction", "g7", "g20", "imf"],
 }
 
 # ─── HELPER FUNCTIONS ────────────────────────────────────────────────────────
@@ -223,10 +223,10 @@ def alert_telegram(msg):
         except:
             pass
 
-# ─── FIX 1: TITLE SIMILARITY DEDUP (Jaccard 35%) ─────────────────────────────
+# ─── TITLE SIMILARITY DEDUP (Jaccard) ───────────────────────────────────────
 
 def clean_words(text):
-    """Clean text for similarity comparison - from Press Box."""
+    """Clean text for similarity comparison."""
     STOPWORDS = frozenset([
         "the", "a", "an", "in", "on", "at", "to", "for", "of", "with", "by",
         "as", "is", "was", "are", "were", "be", "been", "has", "have", "had",
@@ -236,18 +236,12 @@ def clean_words(text):
         "pada", "adalah", "akan", "juga", "sudah", "tidak", "bisa", "lebih"
     ])
     text = text.lower()
-    # Remove punctuation
     text = re.sub(r'[^\w\s]', ' ', text)
     words = text.split()
-    # Filter stopwords
     return set(w for w in words if w not in STOPWORDS and len(w) > 1)
 
 def is_similar(new_title, posted_titles, threshold=SIMILARITY_THRESHOLD):
-    """Check if title is too similar to already posted content - Jaccard similarity.
-    
-    From Press Box: prevents posting same story from different angles.
-    Example: "IHSG Naik 5%" vs "IHSG Rally 5%" = similarity 0.7 → SKIP
-    """
+    """Check if title is too similar to already posted content."""
     new_words = clean_words(new_title)
     if not new_words:
         return False
@@ -327,21 +321,18 @@ def apply_time_boost(score, feedback):
 
     return score
 
-# ─── FIX 4: IMAGE EXTRACTION - 3-METHOD FALLBACK ─────────────────────────────
+# ─── IMAGE EXTRACTION ────────────────────────────────────────────────────────
 
 def extract_image_from_html(html_content):
     """Extract image from HTML using 3 methods."""
-    # Method 1: og:image (most reliable)
     m = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', html_content, re.IGNORECASE)
     if m:
         return m.group(1)
 
-    # Method 2: twitter:image
     m = re.search(r'<meta\s+(?:name|property)="twitter:image"\s+content="([^"]+)"', html_content, re.IGNORECASE)
     if m:
         return m.group(1)
 
-    # Method 3: First article img
     m = re.search(r'<article[^>]*>.*?<img[^>]+src="([^"]+)"', html_content, re.DOTALL | re.IGNORECASE)
     if m:
         return m.group(1)
@@ -349,10 +340,7 @@ def extract_image_from_html(html_content):
     return None
 
 def extract_image(url):
-    """Extract article image with 3-method fallback chain.
-    
-    From Press Box: og:image → twitter:image → first article img
-    """
+    """Extract article image with 3-method fallback chain."""
     import subprocess
     try:
         r = subprocess.run(
@@ -421,7 +409,7 @@ def scrape_rss(url, source_name):
     return articles
 
 def scrape_all_sources():
-    """Scrape all RSS sources in parallel (from Press Box)."""
+    """Scrape all RSS sources in parallel."""
     import concurrent.futures
 
     all_articles = []
@@ -456,30 +444,17 @@ def is_fresh(pub_date_str, hours=24):
         return True
 
 def score_candidate(article, posted, feedback):
-    """Score article with 7-layer scoring system.
-    
-    Adapted from Press Box v7 score_topic() but optimized for finance:
-    - Layer 1: Impact keywords (crash/surge/negative) - market-moving news
-    - Layer 2: Urgency signals (breaking > timely)
-    - Layer 3: Indonesian relevance (local impact priority)
-    - Layer 4: Penalties (boring/opinion noise)
-    - Layer 5: Viral factors (engagement drivers)
-    - Layer 6: Title quality (short = catchy)
-    - Layer 7: Analytics feedback (adaptive learning)
-    """
+    """Score article with 7-layer scoring system."""
     title = article["title"].lower()
     desc = article["description"].lower()
     combined = f"{title} {desc}"
 
-    # Skip if already posted
     if article["url"] in posted:
         return -1000
 
-    # Skip if not fresh
     if not is_fresh(article.get("published", ""), hours=24):
         return -500
 
-    # Skip if not economic/financial topic
     ECONOMIC_KEYWORDS = [
         "harga", "saham", "ihsg", "idx", "rupiah", "dollar", "bi rate", "suku bunga",
         "inflasi", "ekonomi", "pasar", "investasi", "komoditas", "cpo", "sawit",
@@ -497,11 +472,10 @@ def score_candidate(article, posted, feedback):
     
     has_economic_keyword = any(kw in combined for kw in ECONOMIC_KEYWORDS)
     if not has_economic_keyword:
-        return -200  # Penalize non-economic articles
+        return -200
 
     score = 0
 
-    # ── LAYER 1: IMPACT KEYWORDS (market-moving) ──────────────────────────
     for kw in IMPACT_CRASH:
         if kw in combined:
             score += 30
@@ -517,7 +491,6 @@ def score_candidate(article, posted, feedback):
             score += 20
             break
 
-    # ── LAYER 2: URGENCY SIGNALS (breaking > timely) ──────────────────────
     for kw in URGENCY_HIGH:
         if kw in combined:
             score += 25
@@ -528,7 +501,6 @@ def score_candidate(article, posted, feedback):
             score += 15
             break
 
-    # ── LAYER 3: INDONESIAN RELEVANCE (local priority) ────────────────────
     for kw in INDO_HIGH:
         if kw in combined:
             score += 40
@@ -544,7 +516,6 @@ def score_candidate(article, posted, feedback):
             score += 15
             break
 
-    # ── LAYER 4: PENALTIES (boring/opinion noise) ─────────────────────────
     for kw in BORING_KEYWORDS:
         if kw in combined:
             score -= 15
@@ -555,13 +526,11 @@ def score_candidate(article, posted, feedback):
             score -= 20
             break
 
-    # ── VIDEO EXCLUSION (skip video-based articles) ────────────────────────
     for kw in VIDEO_KEYWORDS:
-        if kw in title:  # Check title only, not description
+        if kw in title:
             score -= 100
             break
 
-    # ── LAYER 5: VIRAL FACTORS (engagement drivers) ───────────────────────
     viral_count = 0
     for factor, keywords in VIRAL_FACTORS.items():
         for kw in keywords:
@@ -573,7 +542,6 @@ def score_candidate(article, posted, feedback):
     if viral_count >= 3:
         score += 50
 
-    # ── LAYER 6: TITLE QUALITY (short = catchy) ───────────────────────────
     words = article["title"].split()
     if len(words) <= 8:
         score += 15
@@ -583,7 +551,6 @@ def score_candidate(article, posted, feedback):
     if re.search(r'\d+', article["title"]):
         score += 10
 
-    # ── LAYER 7: ANALYTICS FEEDBACK (adaptive learning) ───────────────────
     score = apply_topic_boost(score, article["title"], feedback)
     score = apply_time_boost(score, feedback)
 
@@ -595,7 +562,6 @@ def select_best_candidate(articles, posted, feedback, posted_titles=None):
     skipped_similar = 0
 
     for article in articles:
-        # FIX 1: Title similarity dedup
         if posted_titles and is_similar(article["title"], posted_titles):
             skipped_similar += 1
             continue
@@ -615,18 +581,12 @@ def select_best_candidate(articles, posted, feedback, posted_titles=None):
     log(f"Best candidate: {best_article['title']} (score: {best_score:.1f})")
     return best_article
 
-# ─── FIX 3: CONTENT EXTRACTION - newspaper3k + fallback ──────────────────────
+# ─── CONTENT EXTRACTION ──────────────────────────────────────────────────────
 
 def extract_article_content(url):
-    """Extract article content using 3-method chain.
-    
-    Method 1: newspaper3k (best quality, 3-5K chars)
-    Method 2: curl + <article> tag (BBC, news sites)
-    Method 3: curl + all <p> tags (fallback)
-    """
+    """Extract article content using 3-method chain."""
     import subprocess
 
-    # Method 1: newspaper3k (best quality)
     try:
         import newspaper
         article = newspaper.Article(url)
@@ -640,7 +600,6 @@ def extract_article_content(url):
     except Exception as e:
         log(f"[EXTRACT] newspaper3k failed: {e}", "WARN")
 
-    # Method 2: curl + <article> tag
     try:
         result = subprocess.run(
             ["curl", "-sL", "--max-time", "10",
@@ -650,7 +609,6 @@ def extract_article_content(url):
         )
         html_content = result.stdout
 
-        # Try <article> tag first
         article_match = re.search(r'<article[^>]*>(.*?)</article>', html_content, re.DOTALL)
         if article_match:
             article_html = article_match.group(1)
@@ -660,14 +618,12 @@ def extract_article_content(url):
                 log(f"[EXTRACT] curl article tag: {len(text)} chars")
                 return text[:5000]
 
-        # Method 3: All <p> tags
         paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', html_content, re.DOTALL)
         text = ' '.join([re.sub(r'<[^>]+>', '', p).strip() for p in paragraphs if len(p) > 50])
         if len(text) > 500:
             log(f"[EXTRACT] curl p tags: {len(text)} chars")
             return text[:5000]
 
-        # Final fallback: strip all HTML
         text = re.sub(r'<[^>]+>', ' ', html_content)
         text = re.sub(r'\s+', ' ', text).strip()
         log(f"[EXTRACT] curl fallback: {len(text)} chars")
@@ -677,7 +633,7 @@ def extract_article_content(url):
         log(f"[EXTRACT] curl failed: {e}", "ERROR")
         return ""
 
-# ─── FIX 6: LLM MODEL FALLBACK (deepseek v4-flash → mimo v2.5) ──────────────
+# ─── LLM CALLS ───────────────────────────────────────────────────────────────
 
 def call_llm(system_prompt, user_prompt, model):
     """Call LLM API with system + user prompt split."""
@@ -686,7 +642,7 @@ def call_llm(system_prompt, user_prompt, model):
 
     if not api_key:
         log("No API key found", "ERROR")
-        return None
+        return None, None
 
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -711,7 +667,6 @@ def call_llm(system_prompt, user_prompt, model):
             log(f"LLM API error ({model}): HTTP {r.status_code}", "ERROR")
             return None, None
 
-        # Process SSE stream
         content_parts = []
         reasoning_parts = []
         for line in r.iter_lines():
@@ -726,7 +681,7 @@ def call_llm(system_prompt, user_prompt, model):
             try:
                 chunk = json.loads(data_str)
                 choices = chunk.get("choices", [])
-                if not choices:  # Handle empty choices (usage chunk)
+                if not choices:
                     continue
                 delta = choices[0].get("delta", {})
                 if "content" in delta and delta["content"]:
@@ -750,35 +705,22 @@ def call_llm(system_prompt, user_prompt, model):
 
     except Exception as e:
         log(f"LLM error ({model}): {e}", "ERROR")
-        return None
+        return None, None
 
 def extract_json_from_content(content):
-    """Extract JSON from LLM content (handles multiple formats).
-    
-    Formats:
-    1. {"slide_1": "text...", "slide_2": "text..."}  (string format)
-    2. {"slide_1": {"hook": "..."}, "slide_2": {"content": "..."}}  (object format)
-    3. Wrapped in ```json ... ``` blocks
-    4. Wrapped in ``` ... ``` blocks (no language tag)
-    5. Extra text before/after JSON
-    """
-    # Strip markdown code blocks (multiple patterns)
+    """Extract JSON from LLM content (handles multiple formats)."""
     content = re.sub(r'```json\s*', '', content)
     content = re.sub(r'```\s*$', '', content)
-    content = re.sub(r'```\w*\s*', '', content)  # Any language tag
+    content = re.sub(r'```\w*\s*', '', content)
     content = content.strip()
     
-    # Find JSON - try multiple patterns
     json_match = None
     
-    # Pattern 1: Standard JSON object
     json_match = re.search(r'\{[\s\S]*\}', content)
     
-    # Pattern 2: Look for slide_1 specifically
     if not json_match:
         json_match = re.search(r'\{[^{}]*"slide_1"[\s\S]*\}', content)
     
-    # Pattern 3: Try to find balanced braces
     if not json_match:
         start = content.find('{')
         if start != -1:
@@ -796,9 +738,7 @@ def extract_json_from_content(content):
     try:
         data = json.loads(json_match.group())
     except json.JSONDecodeError:
-        # Try to fix common issues
         json_str = json_match.group()
-        # Remove trailing commas
         json_str = re.sub(r',\s*}', '}', json_str)
         json_str = re.sub(r',\s*]', ']', json_str)
         try:
@@ -806,20 +746,17 @@ def extract_json_from_content(content):
         except:
             return None
     
-    # Normalize format: convert strings to objects
     normalized = {}
     for i in range(1, 9):
         key = f"slide_{i}"
         if key in data:
             val = data[key]
             if isinstance(val, str):
-                # String format: "slide_1": "text..."
                 if i == 1:
                     normalized[key] = {"hook": val, "content": ""}
                 else:
                     normalized[key] = {"hook": "", "content": val}
             elif isinstance(val, dict):
-                # Object format: "slide_1": {"hook": "...", "content": "..."}
                 normalized[key] = val
     
     if len(normalized) >= 6:
@@ -827,15 +764,10 @@ def extract_json_from_content(content):
     return None
 
 def extract_json_from_reasoning(reasoning):
-    """Extract JSON from reasoning content (Strategy 1 + 2).
-    
-    Strategy 1: Find JSON with slide markers
-    Strategy 2: Find LAST valid JSON with real content
-    """
+    """Extract JSON from reasoning content (Strategy 1 + 2)."""
     if not reasoning:
         return None
     
-    # Strategy 1: Find JSON with slide markers
     for marker in ["slide_1", "slides"]:
         idx = 0
         while idx < len(reasoning):
@@ -855,7 +787,6 @@ def extract_json_from_reasoning(reasoning):
             try:
                 obj = json.loads(reasoning[start:end+1])
                 if isinstance(obj, dict) and marker in obj:
-                    # Validate: check content length
                     sample = ""
                     for k in ["slide_1", "slide_2", "slides"]:
                         if k in obj:
@@ -867,18 +798,16 @@ def extract_json_from_reasoning(reasoning):
                             elif isinstance(v, list) and len(v) > 0:
                                 sample = v[0] if isinstance(v[0], str) else str(v[0])
                             break
-                    if len(sample) > 50:  # Real content, not placeholder
+                    if len(sample) > 50:
                         log(f"   Strategy 1: Found JSON in reasoning ({len(reasoning[start:end+1])}c, key={marker})")
                         return extract_json_from_content(reasoning[start:end+1])
             except json.JSONDecodeError:
                 pass
             idx = end + 1
     
-    # Strategy 2: Find LAST valid JSON with real content (fallback)
     log("   Strategy 2: scanning for last valid JSON with content...")
     best_json = ""
     best_score = 0
-    # Scan from end, find all valid JSONs with 8+ keys
     for i in range(len(reasoning) - 1, max(len(reasoning) - 50000, -1), -1):
         if reasoning[i] == '}':
             for j in range(i, max(i - 15000, -1), -1):
@@ -886,7 +815,6 @@ def extract_json_from_reasoning(reasoning):
                     try:
                         obj = json.loads(reasoning[j:i+1])
                         if isinstance(obj, dict) and len(obj) >= 8:
-                            # Score by total content length
                             total_content = 0
                             for k, v in obj.items():
                                 if isinstance(v, dict) and "content" in v:
@@ -911,12 +839,7 @@ def extract_json_from_reasoning(reasoning):
     return None
 
 def generate_content(article, article_content):
-    """Generate Threads content via LLM with model fallback.
-    
-    Primary: deepseek-v4-flash (fast, good JSON)
-    Fallback 1: mimo-v2.5 (good Indonesian)
-    Fallback 2: claude-sonnet-4.6 (best quality)
-    """
+    """Generate Threads content via LLM with model fallback."""
     system_prompt = """# ROLE
 Kamu adalah content writer ekonomi pasar Indonesia. Nada: langsung, jujur, empati ke orang kecil — bukan wartawan formal.
 
@@ -987,19 +910,22 @@ URL: {article['url']}
 ARTIKEL:
 {article_content[:3000]}"""
 
+    # Determine models to try
+    if FORCE_MODEL:
+        models_to_try = [FORCE_MODEL]
+    else:
+        models_to_try = LLM_MODELS
 
-    # Try models in order (primary → fallback) with hook validation
-    MAX_HOOK_RETRIES = 2  # Allow retry for short slides
+    MAX_HOOK_RETRIES = 2
     
-    for model in LLM_MODELS:
+    for model in models_to_try:
         for attempt in range(MAX_HOOK_RETRIES):
             log(f"[LLM] Trying model: {model} (attempt {attempt + 1})")
             content, reasoning = call_llm(system_prompt, user_prompt, model)
 
             if content or reasoning:
-                save_json(RAW_OUTPUT_FILE, {"content": content, "reasoning": reasoning[:2000], "model": model, "timestamp": datetime.now().isoformat()})
+                save_json(RAW_OUTPUT_FILE, {"content": content, "reasoning": reasoning[:2000] if reasoning else "", "model": model, "timestamp": datetime.now().isoformat()})
 
-                # Try content first, then reasoning (Strategy 1 + 2)
                 slides_data = None
                 if content:
                     slides_data = extract_json_from_content(content)
@@ -1008,16 +934,13 @@ ARTIKEL:
                     slides_data = extract_json_from_reasoning(reasoning)
                 
                 if slides_data:
-                    # Validate hook
                     hook = slides_data.get("slide_1", {}).get("hook", "") or slides_data.get("slide_1", {}).get("content", "")
                     is_valid, issues = validate_hook(hook)
                     
                     if is_valid:
-                        # Validate sentence counts
                         sentences_valid, sentence_issues = validate_slide_sentences(slides_data)
                         
                         if sentences_valid:
-                            # Validate grounding (no hallucination)
                             grounding_valid, grounding_issues = validate_grounding(slides_data, article_content)
                             
                             if grounding_valid:
@@ -1029,7 +952,6 @@ ARTIKEL:
                                     log(f"[LLM] Retrying with same model...")
                                 continue
                         else:
-                            # Log sentence count issues
                             sentence_info = ", ".join(sentence_issues)
                             log(f"[LLM] ⚠️ Sentence count: {sentence_info}", "WARN")
                             if attempt < MAX_HOOK_RETRIES - 1:
@@ -1042,42 +964,32 @@ ARTIKEL:
                         continue
                 else:
                     log(f"[LLM] ❌ JSON parse failed for {model}", "WARN")
-                    break  # Move to next model
+                    break
     
     log("[LLM] ❌ All models failed (hook validation failed or parse error)", "ERROR")
     return None
 
 def add_smart_whitespace(content):
-    """Add line breaks after sentences, but NOT after abbreviations like No., Mr., etc."""
-    # Protect abbreviations temporarily
+    """Add line breaks after sentences, but NOT after abbreviations."""
     abbreviations = ['No', 'Mr', 'Mrs', 'Dr', 'St', 'vs', 'etc', 'dll']
     protected = content
     for abbr in abbreviations:
         protected = protected.replace(f'{abbr}.', f'{abbr}[[DOT]]')
     
-    # Split by: period/exclamation/question mark + space + capital letter
     sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', protected)
     
-    # Restore abbreviations
     restored = [sent.replace('[[DOT]]', '.') for sent in sentences]
     
-    # Join with double newlines
     return '\n\n'.join(restored)
 
 def validate_hook(hook):
-    """Validate that hook has all 3 required elements: ANGKA + KONTEKST + DRAMA.
-    
-    Returns: (is_valid, issues)
-    """
+    """Validate that hook has all 3 required elements: ANGKA + KONTEKST + DRAMA."""
     issues = []
     
-    # Check 1: ANGKA (numbers, percentages, currency, years)
-    # More flexible: any number at all
     has_angka = bool(re.search(r'\d+', hook))
     if not has_angka:
         issues.append("GAK ADA ANGKA SPESIFIK")
     
-    # Check 2: KONTEKST (recognizable context words)
     konteks_words = ['gaji', 'harga', 'sembako', 'BBM', 'rumah', 'IHSG', 'saham', 'investasi', 
                      'properti', 'KPR', 'cicilan', 'pangan', 'beras', 'minyak', 'energi',
                      'ekonomi', 'pasar', 'defisit', 'inflasi', 'suku bunga', 'BI rate',
@@ -1088,31 +1000,35 @@ def validate_hook(hook):
                      'reksadana', 'obligasi', 'deposito', 'tabungan', 'kas',
                      'piutang', 'hutang', 'anggaran', 'belanja', 'pajak',
                      'rupiah', 'emiten', 'persero', 'pt', 'tbk',
-                     # Employment/Labor
                      'buruh', 'pekerja', 'karyawan', 'aryawan', 'tenaga kerja',
                      'lapangan kerja', 'phk', 'pemutusan', 'industri', 'pabrik',
                      'manufaktur', 'produksi', 'ekspor', 'impor',
-                     # Crypto/Tech
                      'bitcoin', 'crypto', 'token', 'blockchain', 'ethereum',
                      'the fed', 'fed', 'the federal', 'moneter', 'rate',
-                     # Social/Aid
                      'bantuan', 'kemensos', 'sosial', 'banpoin', 'penerima',
                      'korban', 'bencana', 'longsor', 'banjir', 'gempa']
     has_konteks = any(word.lower() in hook.lower() for word in konteks_words)
     if not has_konteks:
         issues.append("GAK ADA KONTEKST YANG JELAS")
     
-    # Check 3: DRAMA (emotional/dramatic words)
+    # Drama words — expanded list
     drama_words = ['naik', 'turun', 'anjlok', 'meledak', 'ambruk', 'jatuh', 'rally',
                    'kosong', 'langka', 'mahal', 'murah', 'sesak', 'miskin', 'kaya',
                    'phk', 'tutup', 'bangkrut', 'gagal', 'guncang', 'terancam',
                    'tapi', 'malah', 'justru', 'tetep', 'terus', 'makin',
-                   'hilang', 'ditarik', 'tarik', 'belum', 'gigit', 'was-wada',
+                   'hilang', 'ditarik', 'tarik', 'belum', 'gigit', 'was-was',
                    'kaget', 'terkejut', 'miris', 'menyedihkan',
-                   # Additional drama words
-                   'darah', 'berdarah', 'berdara-darah', 'runtuh', 'hancur',
+                   'darah', 'berdarah', 'runtuh', 'hancur',
                    'panik', 'ketakutan', 'gejolak', 'krisis', 'darurat',
-                   'perang', 'konflik', 'sanksi', 'larang', 'blokir']
+                   'perang', 'konflik', 'sanksi', 'larang', 'blokir',
+                   # EXTRA DRAMA — more words for better pass rate
+                   'merugi', 'rugi', 'anjlok', 'merosot', 'terpuruk', 'terperosok',
+                   'sengsara', 'menderita', 'susah', 'kesulitan', 'ketergantungan',
+                   'ancaman', 'bahaya', 'risiko', 'padam', 'mati', ' lumpuh',
+                   'kolaps', 'gulung tikar', 'tutup operasi', 'hentikan',
+                   'tinggalkan', 'kabur', 'melarikan', 'lari', 'menghilang',
+                   'publik', 'heboh', 'viral', 'ramai', 'polemik', ' kontroversi',
+                   'sorot', ' sorotan', 'perhatian', 'fokus', 'gebrakan', 'kejutan']
     has_drama = any(word.lower() in hook.lower() for word in drama_words)
     if not has_drama:
         issues.append("GAK ADA DRAMA/EMOSI")
@@ -1121,32 +1037,17 @@ def validate_hook(hook):
     return is_valid, issues
 
 def count_sentences(text):
-    """Count sentences in text by splitting on sentence endings.
-    
-    Skips short fragments (< 5 chars) like Pressbox does.
-    """
+    """Count sentences in text (skips short fragments < 5 chars)."""
     if not text:
         return 0
-    # Split by sentence endings followed by space or end
     sentences = re.split(r'(?<=[.!?])\s+', text)
-    # Filter out empty strings and short fragments
     sentences = [s for s in sentences if s.strip() and len(s.strip()) > 5]
     return len(sentences)
 
 def validate_slide_sentences(slides_data):
-    """Validate sentence counts per slide.
-    
-    Slide 1: 2-3 sentences
-    Slides 2-7: 3-4 sentences
-    Slide 8: 2-3 sentences
-    
-    With +1 tolerance for natural variation (like Pressbox).
-    
-    Returns: (is_valid, issues)
-    """
+    """Validate sentence counts per slide (+1 tolerance)."""
     issues = []
     
-    # Slide 1: 2-3 sentences (+1 tolerance = max 4)
     slide1 = slides_data.get('slide_1', {})
     hook = slide1.get('hook', '') if isinstance(slide1, dict) else ''
     content = slide1.get('content', '') if isinstance(slide1, dict) else ''
@@ -1154,10 +1055,9 @@ def validate_slide_sentences(slides_data):
     sentences = count_sentences(text)
     if sentences < 2:
         issues.append(f"slide_1: {sentences} sentences (need 2-3)")
-    elif sentences > 4:  # +1 tolerance
+    elif sentences > 4:
         issues.append(f"slide_1: {sentences} sentences (need 2-3)")
     
-    # Slides 2-7: 3-4 sentences (+1 tolerance = max 5)
     for i in range(2, 8):
         slide = slides_data.get(f'slide_{i}', {})
         content = slide.get('content', '') if isinstance(slide, dict) else ''
@@ -1166,10 +1066,9 @@ def validate_slide_sentences(slides_data):
         sentences = count_sentences(text)
         if sentences < 3:
             issues.append(f"slide_{i}: {sentences} sentences (need 3-4)")
-        elif sentences > 5:  # +1 tolerance
+        elif sentences > 5:
             issues.append(f"slide_{i}: {sentences} sentences (need 3-4)")
     
-    # Slide 8: 2-3 sentences (+1 tolerance = max 4)
     slide8 = slides_data.get('slide_8', {})
     content = slide8.get('content', '') if isinstance(slide8, dict) else ''
     hook = slide8.get('hook', '') if isinstance(slide8, dict) else ''
@@ -1177,48 +1076,31 @@ def validate_slide_sentences(slides_data):
     sentences = count_sentences(text)
     if sentences < 2:
         issues.append(f"slide_8: {sentences} sentences (need 2-3)")
-    elif sentences > 4:  # +1 tolerance
+    elif sentences > 4:
         issues.append(f"slide_8: {sentences} sentences (need 2-3)")
     
     is_valid = len(issues) == 0
     return is_valid, issues
 
 def validate_grounding(slides_data, article_text):
-    """Validate that every factual claim in slides appears in the article.
-    
-    For each slide, quote the exact sentence from the article.
-    Return: (passed, issues)
-    """
+    """Validate that every factual claim in slides appears in the article."""
     issues = []
     
-    # Simple keyword-based grounding check
-    # Extract key facts from article (numbers, names, percentages)
-    import re
-    
-    # Find numbers in article (exclude URL-like patterns)
-    article_numbers = set(re.findall(r'(?<![/\w])\d[\d.,]*\d(?![/\w])', article_text))
-    
-    # Find names/entities in article (capitalized words)
-    article_entities = set(re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', article_text))
+    article_numbers = set(re.findall(r'(?<![/\w])\d[\d.,]*\d(?![//\w])', article_text))
     
     for i in range(1, 9):
         slide_key = f"slide_{i}"
         slide = slides_data.get(slide_key, {})
         
-        # Get slide text
         hook = slide.get('hook', '') if isinstance(slide, dict) else ''
         content = slide.get('content', '') if isinstance(slide, dict) else ''
         slide_text = (hook + ' ' + content).lower()
         
-        # Check if numbers in slide appear in article
-        # Skip URL numbers (d-8537189, /d-..., etc.)
         slide_numbers = set(re.findall(r'(?<![/\w-])\d[\d.,]*\d(?![/\w-])', slide_text))
         for num in slide_numbers:
-            if num not in article_numbers and len(num) > 1:  # Skip single digits
-                # Skip very long numbers (article IDs, etc.)
+            if num not in article_numbers and len(num) > 1:
                 if len(num.replace('.', '').replace(',', '')) > 6:
                     continue
-                # Check if it's a plausible number (not just part of text)
                 try:
                     float(num.replace(',', '.'))
                     issues.append(f"slide_{i}: Number '{num}' not found in article")
@@ -1229,77 +1111,55 @@ def validate_grounding(slides_data, article_text):
     return passed, issues
 
 def format_slides(slides_data):
-    """Format slides data into storytelling format with whitespace.
-    
-    Indonesian Threads style:
-    - Slide 1: hook (1 emotional sentence with numbers)
-    - Slides 2-8: content (short paragraphs with line breaks)
-    - Whitespace after every sentence (but NOT after abbreviations like No., Mr., etc.)
-    - No em dashes
-    """
+    """Format slides data into storytelling format with whitespace."""
     slides = []
     for i in range(1, 9):
         key = f"slide_{i}"
         if key in slides_data:
             slide = slides_data[key]
             
-            # Slide 1: hook field
             if i == 1:
                 hook = slide.get("hook", "") or slide.get("title", "") or slide.get("content", "")
-                # Remove em dashes
                 hook = hook.replace('—', ', ').replace('–', ', ')
                 slides.append({"hook": hook, "content": ""})
-            # Slides 2-8: content field
             else:
                 content = slide.get("content", "")
-                # Remove em dashes
                 content = content.replace('—', ', ').replace('–', ', ')
-                # Add smart whitespace
                 content = add_smart_whitespace(content)
                 slides.append({"hook": "", "content": content})
     return slides
 
-# ─── FIX 2: AUTO-POST TO THREADS ─────────────────────────────────────────────
+# ─── THREADS POSTING ─────────────────────────────────────────────────────────
 
 def post_to_threads(staging_data):
-    """Post slides to Threads using Press Box direct-post.py.
-    
-    Returns: (success, root_id, permalink)
-    """
+    """Post slides to Threads using Press Box direct-post.py."""
     import subprocess
 
     if not THREADS_SCRIPT.exists():
         log("[POST] Press Box direct-post.py not found - skipping auto-post", "WARN")
         return False, None, None
 
-    # Format: storytelling style (Indonesian Threads)
     md_content = ""
     for i, slide in enumerate(staging_data['slides'], 1):
         hook = slide.get('hook', '')
         content = slide.get('content', '')
         
-        # Slide 1: hook only (1 emotional sentence)
         if i == 1 and hook:
             md_content += f"{hook}\n\n---\n\n"
-        # Slides 2-8: content with line breaks
         elif content:
             md_content += f"{content}\n\n---\n\n"
 
-    # Write to temp file
     temp_file = DATA_DIR / "latest.md"
     temp_file.write_text(md_content)
 
     try:
-        # Build command with optional image
         cmd = ["python3", str(THREADS_SCRIPT), "--file", str(temp_file)]
         
-        # FIX: Pass image URL for Slide 1
         image_url = staging_data.get("image_url", "")
         if image_url:
             cmd.extend(["--image", image_url])
             log(f"[POST] 📷 Attaching image: {image_url[:60]}...")
 
-        # Increased timeout to 120s (Threads API can be slow)
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=120
         )
@@ -1329,13 +1189,10 @@ def post_to_threads(staging_data):
         log(f"[POST] ❌ Error: {e}", "ERROR")
         return False, None, None
 
-# ─── FIX 5: ANALYTICS FEEDBACK LOOP ──────────────────────────────────────────
-
 def update_analytics(staging_data, root_id=None, permalink=None):
-    """Update analytics after posting - track engagement potential."""
+    """Update analytics after posting."""
     posted = load_json(POSTED_FILE, {})
 
-    # Add to posted topics
     entry = {
         "title": staging_data["title"],
         "url": staging_data["url"],
@@ -1356,37 +1213,449 @@ def update_analytics(staging_data, root_id=None, permalink=None):
     posted[staging_data["url"]] = entry
     save_json(POSTED_FILE, posted)
 
-    # Update title cache for dedup
     title_cache = load_json(TITLE_CACHE_FILE, {"titles": []})
     if staging_data["title"] not in title_cache["titles"]:
         title_cache["titles"].append(staging_data["title"])
-        # Keep last 100 titles
         title_cache["titles"] = title_cache["titles"][-100:]
         save_json(TITLE_CACHE_FILE, title_cache)
 
     log(f"[ANALYTICS] Updated: {staging_data['title'][:50]}...")
 
-# ─── MAIN PIPELINE ───────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# MODE: --benchmark
+# ══════════════════════════════════════════════════════════════════════════════
 
-def run_pipeline():
-    """Main pipeline execution with all 6 optimizations."""
-    log("=== Market Monday Pipeline Started ===")
+def benchmark_extract_full_text(url):
+    """Extract full text via newspaper3k (for benchmark)."""
+    try:
+        import newspaper
+        article = newspaper.Article(url)
+        article.download()
+        article.parse()
+        text = article.text
+        return {
+            "success": True,
+            "length": len(text),
+            "preview": text[:200] + "..." if len(text) > 200 else text,
+            "has_content": len(text) > 500
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e), "length": 0, "preview": "", "has_content": False}
 
-    # Create data dir
+def benchmark_extract_image(url):
+    """Extract og:image URL and check resolution (for benchmark)."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["curl", "-sL", "--max-time", "8",
+             "-A", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+             url],
+            capture_output=True, text=True, timeout=12
+        )
+        html_content = result.stdout
+
+        patterns = [
+            r'<meta\s+property="og:image"\s+content="([^"]+)"',
+            r'<meta\s+(?:name|property)="twitter:image"\s+content="([^"]+)"',
+            r'<meta\s+property="og:image:secure_url"\s+content="([^"]+)"',
+        ]
+
+        for pattern in patterns:
+            m = re.search(pattern, html_content, re.IGNORECASE)
+            if m:
+                image_url = m.group(1)
+                if any(ext in image_url.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', 'image']):
+                    return {
+                        "success": True,
+                        "url": image_url[:100] + "..." if len(image_url) > 100 else image_url,
+                        "full_url": image_url,
+                        "is_hd": "1024" in image_url or "1200" in image_url or "1920" in image_url
+                    }
+
+        return {"success": False, "error": "No image found", "url": "", "full_url": "", "is_hd": False}
+    except Exception as e:
+        return {"success": False, "error": str(e), "url": "", "full_url": "", "is_hd": False}
+
+def benchmark_source(source):
+    """Benchmark a single source."""
+    print(f"\n{'='*60}")
+    print(f"📰 {source['name']}")
+    print(f"{'='*60}")
+
+    print(f"\n1️⃣ Scraping RSS...")
+    articles = scrape_rss(source['url'], source['name'])
+
+    if not articles:
+        print(f"  ❌ No articles found")
+        return {"source": source['name'], "rss_ok": False, "articles": 0}
+
+    print(f"  ✅ Found {len(articles)} articles")
+    for i, art in enumerate(articles, 1):
+        print(f"     {i}. {art['title'][:60]}...")
+
+    test_article = articles[0]
+    print(f"\n2️⃣ Testing: {test_article['title'][:50]}...")
+
+    print(f"\n   📄 Full Text Extraction...")
+    text_result = benchmark_extract_full_text(test_article['url'])
+    if text_result['success']:
+        status = "✅" if text_result['has_content'] else "⚠️"
+        print(f"   {status} Length: {text_result['length']} chars")
+        print(f"      Preview: {text_result['preview'][:100]}...")
+    else:
+        print(f"   ❌ Error: {text_result['error']}")
+
+    print(f"\n   🖼️  Image Extraction...")
+    image_result = benchmark_extract_image(test_article['url'])
+    if image_result['success']:
+        hd_status = "HD" if image_result['is_hd'] else "SD"
+        print(f"   ✅ Found ({hd_status})")
+        print(f"      URL: {image_result['url']}")
+    else:
+        print(f"   ❌ {image_result['error']}")
+
+    return {
+        "source": source['name'],
+        "rss_ok": True,
+        "articles": len(articles),
+        "full_text": text_result,
+        "image": image_result
+    }
+
+def run_benchmark():
+    """Run benchmark on all RSS sources."""
+    print("\n" + "="*60)
+    print("📊 MARKET MONDAY — Source Benchmark")
+    print("="*60)
+
+    results = []
+    for source in BENCHMARK_SOURCES:
+        result = benchmark_source(source)
+        results.append(result)
+        time.sleep(2)
+
+    print("\n\n" + "="*60)
+    print("📊 SUMMARY")
+    print("="*60)
+
+    print(f"\n{'Source':<20} {'RSS':<8} {'Articles':<10} {'Full Text':<12} {'Image':<10} {'HD':<6}")
+    print("-"*70)
+
+    for r in results:
+        rss = "✅" if r.get('rss_ok') else "❌"
+        articles = r.get('articles', 0)
+        full_text = "✅" if r.get('full_text', {}).get('has_content') else "❌"
+        image = "✅" if r.get('image', {}).get('success') else "❌"
+        hd = "✅" if r.get('image', {}).get('is_hd') else "❌"
+
+        print(f"{r['source']:<20} {rss:<8} {articles:<10} {full_text:<12} {image:<10} {hd:<6}")
+
+    save_json(BENCHMARK_FILE, results)
+    print(f"\n📁 Results saved: {BENCHMARK_FILE}")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODE: --analytics
+# ══════════════════════════════════════════════════════════════════════════════
+
+def analytics_get_token():
+    """Get Threads API token."""
+    with open(TOKEN_PATH) as f:
+        data = json.load(f)
+    return data["access_token"], str(data["user_id"])
+
+def analytics_fetch_recent_posts(tok, uid, limit=20):
+    """Fetch recent posts from Threads API."""
+    import httpx
+    try:
+        r = httpx.get(
+            f"https://graph.threads.net/v1.0/{uid}/threads",
+            params={"access_token": tok, "fields": "id,text,timestamp", "limit": limit},
+            timeout=15
+        )
+        return r.json().get("data", [])
+    except Exception as e:
+        print(f"Error fetching posts: {e}")
+        return []
+
+def analytics_fetch_engagement(tok, post_id):
+    """Fetch engagement metrics for a post."""
+    import httpx
+    try:
+        r = httpx.get(
+            f"https://graph.threads.net/v1.0/{post_id}/insights",
+            params={
+                "access_token": tok,
+                "metric": "likes,replies,reposts,views,quotes",
+                "period": "lifetime"
+            },
+            timeout=10
+        )
+        metrics = {"likes": 0, "replies": 0, "reposts": 0, "views": 0, "quotes": 0}
+        for item in r.json().get("data", []):
+            metrics[item["name"]] = item["values"][0]["value"]
+        return metrics
+    except:
+        return {"likes": 0, "replies": 0, "reposts": 0, "views": 0, "quotes": 0}
+
+def analytics_calc_score(m):
+    """Calculate engagement score (weighted)."""
+    return m["likes"] + m["replies"] * 3 + m["reposts"] * 2 + m["quotes"] * 2
+
+def analytics_to_wib_hour(ts):
+    """Convert timestamp to WIB hour."""
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(WIB).hour
+    except:
+        return 12
+
+def analytics_get_time_slot(hour):
+    """Group hours into time slots."""
+    if 6 <= hour < 10:
+        return "pagi (06-10)"
+    elif 10 <= hour < 14:
+        return "siang (10-14)"
+    elif 14 <= hour < 18:
+        return "sore (14-18)"
+    elif 18 <= hour < 22:
+        return "malam (18-22)"
+    else:
+        return "dini hari (22-06)"
+
+def run_analytics():
+    """Run analytics — fetch engagement, generate feedback + report."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from collections import defaultdict
+
+    print("📊 Market Monday Analytics — Starting...")
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Load state
+    try:
+        tok, uid = analytics_get_token()
+    except Exception as e:
+        print(f"❌ Token error: {e}")
+        return 1
+
+    raw = analytics_fetch_recent_posts(tok, uid, limit=20)
+    if not raw:
+        print("⚠️ No posts found.")
+        return 0
+
+    print(f"📊 Analyzing {len(raw)} posts...")
+
+    enriched = []
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(analytics_fetch_engagement, tok, p["id"]): p for p in raw}
+        for future in as_completed(futures):
+            post = futures[future]
+            metrics = future.result()
+            wib_hour = analytics_to_wib_hour(post["timestamp"])
+            enriched.append({
+                "text": post.get("text", ""),
+                "ts": post["timestamp"],
+                "post_id": post["id"],
+                "metrics": metrics,
+                "score": analytics_calc_score(metrics),
+                "wib_hour": wib_hour,
+                "time_slot": analytics_get_time_slot(wib_hour),
+            })
+
+    enriched.sort(key=lambda x: x["score"], reverse=True)
+
+    scores = [p["score"] for p in enriched]
+    avg_score = sum(scores) / max(len(scores), 1)
+    max_score = max(scores) if scores else 0
+    min_score = min(scores) if scores else 0
+
+    topic_stats = defaultdict(lambda: {"count": 0, "total_score": 0, "avg_score": 0})
+    for post in enriched:
+        topics = extract_topics_from_title(post["text"])
+        for topic in topics:
+            topic_stats[topic]["count"] += 1
+            topic_stats[topic]["total_score"] += post["score"]
+
+    for topic in topic_stats:
+        stats = topic_stats[topic]
+        stats["avg_score"] = stats["total_score"] / max(stats["count"], 1)
+
+    sorted_topics = sorted(topic_stats.items(), key=lambda x: x[1]["avg_score"], reverse=True)
+
+    time_stats = defaultdict(lambda: {"count": 0, "total_score": 0, "avg_score": 0})
+    for post in enriched:
+        slot = post["time_slot"]
+        time_stats[slot]["count"] += 1
+        time_stats[slot]["total_score"] += post["score"]
+
+    for slot in time_stats:
+        stats = time_stats[slot]
+        stats["avg_score"] = stats["total_score"] / max(stats["count"], 1)
+
+    sorted_times = sorted(time_stats.items(), key=lambda x: x[1]["avg_score"], reverse=True)
+
+    top_posts = enriched[:5]
+    bottom_posts = enriched[-5:] if len(enriched) >= 5 else enriched
+
+    feedback = {
+        "generated_at": datetime.now().isoformat(),
+        "total_posts_analyzed": len(enriched),
+        "overall": {
+            "avg_score": round(avg_score, 1),
+            "max_score": max_score,
+            "min_score": min_score,
+        },
+        "topic_boosts": {},
+        "time_boosts": {},
+        "best_topics": [],
+        "worst_topics": [],
+        "best_times": [],
+        "worst_times": [],
+    }
+
+    for topic, stats in sorted_topics:
+        boost = 0
+        if avg_score > 0:
+            boost = ((stats["avg_score"] - avg_score) / avg_score) * 100
+        feedback["topic_boosts"][topic] = {
+            "avg_score": round(stats["avg_score"], 1),
+            "count": stats["count"],
+            "boost_pct": round(boost, 1),
+        }
+
+    for slot, stats in sorted_times:
+        boost = 0
+        if avg_score > 0:
+            boost = ((stats["avg_score"] - avg_score) / avg_score) * 100
+        feedback["time_boosts"][slot] = {
+            "avg_score": round(stats["avg_score"], 1),
+            "count": stats["count"],
+            "boost_pct": round(boost, 1),
+        }
+
+    feedback["best_topics"] = [t[0] for t in sorted_topics[:3]]
+    feedback["worst_topics"] = [t[0] for t in sorted_topics[-3:]]
+    feedback["best_times"] = [t[0] for t in sorted_times[:2]]
+    feedback["worst_times"] = [t[0] for t in sorted_times[-2:]]
+
+    save_json(FEEDBACK_FILE, feedback)
+    print(f"✅ Feedback saved: {FEEDBACK_FILE}")
+
+    report = f"""# 📊 Market Monday Analytics Report
+**Generated:** {datetime.now().strftime('%d %b %Y %H:%M WIB')}
+**Posts Analyzed:** {len(enriched)}
+
+---
+
+## 📈 Overall Performance
+
+| Metric | Value |
+|--------|-------|
+| Average Score | **{avg_score:.1f}** |
+| Highest Score | **{max_score}** |
+| Lowest Score | **{min_score}** |
+
+---
+
+## 🏆 Top Topics (by avg score)
+
+| Topic | Avg Score | Count | Boost |
+|-------|-----------|-------|-------|
+"""
+    for topic, stats in sorted_topics[:5]:
+        boost = feedback["topic_boosts"][topic]["boost_pct"]
+        emoji = "🟢" if boost > 0 else "🔴" if boost < 0 else "⚪"
+        report += f"| {topic} | {stats['avg_score']:.1f} | {stats['count']} | {emoji} {boost:+.0f}% |\n"
+
+    report += f"""
+---
+
+## ⏰ Best Posting Times (WIB)
+
+| Time Slot | Avg Score | Count | Boost |
+|-----------|-----------|-------|-------|
+"""
+    for slot, stats in sorted_times:
+        boost = feedback["time_boosts"][slot]["boost_pct"]
+        emoji = "🟢" if boost > 0 else "🔴" if boost < 0 else "⚪"
+        report += f"| {slot} | {stats['avg_score']:.1f} | {stats['count']} | {emoji} {boost:+.0f}% |\n"
+
+    report += f"""
+---
+
+## 🔥 Top 5 Posts
+
+"""
+    for i, post in enumerate(top_posts, 1):
+        topics = extract_topics_from_title(post["text"])
+        report += f"""**{i}. Score: {post['score']}** | Topics: {', '.join(topics)}
+> {post['text'][:100]}...
+
+"""
+
+    report += f"""
+---
+
+## 📉 Bottom 5 Posts (Learning)
+
+"""
+    for i, post in enumerate(bottom_posts, 1):
+        topics = extract_topics_from_title(post["text"])
+        report += f"""**{i}. Score: {post['score']}** | Topics: {', '.join(topics)}
+> {post['text'][:100]}...
+
+"""
+
+    report += f"""
+---
+
+## 💡 Recommendations
+
+**DO MORE:**
+"""
+    for topic in feedback["best_topics"][:3]:
+        report += f"- ✅ **{topic}** — performing above average\n"
+
+    report += f"""
+**DO LESS:**
+"""
+    for topic in feedback["worst_topics"][:3]:
+        report += f"- ❌ **{topic}** — performing below average\n"
+
+    report += f"""
+**BEST TIMES:**
+"""
+    for time_slot in feedback["best_times"]:
+        report += f"- ⏰ **{time_slot}** — higher engagement\n"
+
+    with open(REPORT_FILE, 'w') as f:
+        f.write(report)
+    print(f"✅ Report saved: {REPORT_FILE}")
+
+    print(f"\n📊 Summary:")
+    print(f"   Posts analyzed: {len(enriched)}")
+    print(f"   Avg score: {avg_score:.1f}")
+    print(f"   Best topics: {', '.join(feedback['best_topics'][:3])}")
+    print(f"   Best times: {', '.join(feedback['best_times'])}")
+
+    return 0
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODE: (default) — Main Pipeline
+# ══════════════════════════════════════════════════════════════════════════════
+
+def run_pipeline():
+    """Main pipeline execution."""
+    log("=== Market Monday Pipeline Started ===")
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
     posted = load_json(POSTED_FILE, {})
     posted_urls = set(posted.keys())
 
-    # Load title cache for dedup
     title_cache = load_json(TITLE_CACHE_FILE, {"titles": []})
     posted_titles = title_cache.get("titles", [])
 
-    # Load analytics feedback
     feedback = load_feedback()
 
-    # Scrape all sources (parallel)
     log("Scraping RSS sources...")
     articles = scrape_all_sources()
 
@@ -1397,7 +1666,6 @@ def run_pipeline():
 
     log(f"Total articles scraped: {len(articles)}")
 
-    # Select best candidate (with feedback boosts + title dedup)
     best = select_best_candidate(articles, posted_urls, feedback, posted_titles)
 
     if not best:
@@ -1405,7 +1673,6 @@ def run_pipeline():
         print("No suitable candidate")
         sys.exit(2)
 
-    # Extract article content (newspaper3k + fallback)
     log(f"Extracting content: {best['url'][:60]}...")
     article_content = extract_article_content(best["url"])
 
@@ -1414,7 +1681,6 @@ def run_pipeline():
         print("Article content too short")
         sys.exit(2)
 
-    # Generate content via LLM (with model fallback)
     log("Generating content via LLM...")
     slides_data = generate_content(best, article_content)
 
@@ -1424,20 +1690,17 @@ def run_pipeline():
         print("LLM failed")
         sys.exit(1)
 
-    # Format slides
     slides = format_slides(slides_data)
 
     if len(slides) < 8:
         log(f"Only {len(slides)} slides generated (need 8)", "WARN")
 
-    # Extract image (3-method fallback)
     image_url = extract_image(best['url'])
     if image_url:
         log(f"📷 Image: {image_url[:60]}...")
     else:
         log("No image found")
 
-    # Save to staging
     staging_data = {
         "title": best["title"],
         "url": best["url"],
@@ -1450,7 +1713,6 @@ def run_pipeline():
 
     save_json(STAGING_FILE, staging_data)
 
-    # Save latest as markdown (storytelling format)
     md_content = f"{best['title']}\n\nSumber: {best['source']}\nURL: {best['url']}\n\n---\n\n"
     for i, slide in enumerate(slides, 1):
         hook = slide.get('hook', '')
@@ -1463,7 +1725,6 @@ def run_pipeline():
     with open(LATEST_FILE, 'w') as f:
         f.write(md_content)
 
-    # Auto-post to Threads
     if DRY_RUN:
         log("🏃 DRY RUN - skipping post to Threads")
         success = True
@@ -1473,7 +1734,6 @@ def run_pipeline():
         log("Auto-posting to Threads...")
         success, root_id, permalink = post_to_threads(staging_data)
 
-    # Update analytics
     update_analytics(staging_data, root_id, permalink)
 
     if success:
@@ -1486,20 +1746,38 @@ def run_pipeline():
 
     return True
 
+# ─── CLI ─────────────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Market Monday Pipeline — All-in-One")
     parser.add_argument("--dry-run", action="store_true", help="Skip posting to Threads")
+    parser.add_argument("--benchmark", action="store_true", help="Test RSS sources quality")
+    parser.add_argument("--analytics", action="store_true", help="Fetch engagement, update feedback")
+    parser.add_argument("--model", type=str, help="Force specific LLM model")
     args = parser.parse_args()
     
     DRY_RUN = args.dry_run
+    FORCE_MODEL = args.model
+    
     if DRY_RUN:
         log("🏃 DRY RUN MODE - will NOT post to Threads")
     
+    if FORCE_MODEL:
+        log(f"🎯 FORCE MODEL: {FORCE_MODEL}")
+    
     try:
-        success = run_pipeline()
-        sys.exit(0 if success else 1)
+        if args.benchmark:
+            run_benchmark()
+        elif args.analytics:
+            run_analytics()
+        else:
+            success = run_pipeline()
+    except KeyboardInterrupt:
+        log("Interrupted by user")
+        sys.exit(1)
     except Exception as e:
-        log(f"Pipeline error: {e}", "ERROR")
-        alert_telegram(f"Pipeline error: {e}")
+        log(f"Fatal error: {e}", "ERROR")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
