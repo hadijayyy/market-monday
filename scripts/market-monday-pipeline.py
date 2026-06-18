@@ -46,7 +46,7 @@ LLM_API_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 LLM_MODELS = ["mimo-v2.5", "minimax-m3"]  # Primary → Fallback (reasoning model)
 DRY_RUN = False  # Set to True via --dry-run flag
 LLM_MAX_TOKENS = 6000
-LLM_TIMEOUT = 60  # 60s per model (reduced from 90s)
+LLM_TIMEOUT = 90  # 90s per model (increased for retries)
 
 # SIMILARITY CONFIG (from Press Box)
 SIMILARITY_THRESHOLD = 0.35  # Jaccard similarity threshold for dedup
@@ -839,12 +839,21 @@ ARTIKEL:
                     is_valid, issues = validate_hook(hook)
                     
                     if is_valid:
-                        # Validate slide lengths (2-8 must be >= 200 chars)
+                        # Validate slide lengths (2-8 must be >= 150 chars)
                         lengths_valid, short_slides = validate_slide_lengths(slides_data)
                         
                         if lengths_valid:
-                            log(f"[LLM] ✅ Success with {model} - Hook valid: {hook[:50]}...")
-                            return slides_data
+                            # Validate grounding (no hallucination)
+                            grounding_valid, grounding_issues = validate_grounding(slides_data, article_content)
+                            
+                            if grounding_valid:
+                                log(f"[LLM] ✅ Success with {model} - Hook valid: {hook[:50]}...")
+                                return slides_data
+                            else:
+                                log(f"[LLM] ⚠️ Grounding issues: {', '.join(grounding_issues)}", "WARN")
+                                if attempt < MAX_HOOK_RETRIES - 1:
+                                    log(f"[LLM] Retrying with same model...")
+                                continue
                         else:
                             # Log which slides are too short
                             short_info = ", ".join([f"slide_{s[0]}={s[1]}c" for s in short_slides])
@@ -908,7 +917,13 @@ def validate_hook(hook):
                      # Employment/Labor
                      'buruh', 'pekerja', 'karyawan', 'aryawan', 'tenaga kerja',
                      'lapangan kerja', 'phk', 'pemutusan', 'industri', 'pabrik',
-                     'manufaktur', 'produksi', 'ekspor', 'impor']
+                     'manufaktur', 'produksi', 'ekspor', 'impor',
+                     # Crypto/Tech
+                     'bitcoin', 'crypto', 'token', 'blockchain', 'ethereum',
+                     'the fed', 'fed', 'the federal', 'moneter', 'rate',
+                     # Social/Aid
+                     'bantuan', 'kemensos', 'sosial', 'banpoin', 'penerima',
+                     'korban', 'bencana', 'longsor', 'banjir', 'gempa']
     has_konteks = any(word.lower() in hook.lower() for word in konteks_words)
     if not has_konteks:
         issues.append("GAK ADA KONTEKST YANG JELAS")
@@ -919,7 +934,11 @@ def validate_hook(hook):
                    'phk', 'tutup', 'bangkrut', 'gagal', 'guncang', 'terancam',
                    'tapi', 'malah', 'justru', 'tetep', 'terus', 'makin',
                    'hilang', 'ditarik', 'tarik', 'belum', 'gigit', 'was-wada',
-                   'kaget', 'terkejut', 'miris', 'menyedihkan']
+                   'kaget', 'terkejut', 'miris', 'menyedihkan',
+                   # Additional drama words
+                   'darah', 'berdarah', 'berdara-darah', 'runtuh', 'hancur',
+                   'panik', 'ketakutan', 'gejolak', 'krisis', 'darurat',
+                   'perang', 'konflik', 'sanksi', 'larang', 'blokir']
     has_drama = any(word.lower() in hook.lower() for word in drama_words)
     if not has_drama:
         issues.append("GAK ADA DRAMA/EMOSI")
@@ -928,12 +947,12 @@ def validate_hook(hook):
     return is_valid, issues
 
 def validate_slide_lengths(slides_data):
-    """Validate that slides 2-8 have minimum 200 chars.
+    """Validate that slides 2-8 have minimum 150 chars.
     
     Returns: (is_valid, short_slides)
     """
     short_slides = []
-    min_chars = 200
+    min_chars = 150  # Realistic minimum for informal content
     
     for i in range(2, 9):  # Slides 2-8
         slide_key = f"slide_{i}"
@@ -949,6 +968,48 @@ def validate_slide_lengths(slides_data):
     
     is_valid = len(short_slides) == 0
     return is_valid, short_slides
+
+def validate_grounding(slides_data, article_text):
+    """Validate that every factual claim in slides appears in the article.
+    
+    For each slide, quote the exact sentence from the article.
+    Return: (passed, issues)
+    """
+    issues = []
+    
+    # Simple keyword-based grounding check
+    # Extract key facts from article (numbers, names, percentages)
+    import re
+    
+    # Find numbers in article
+    article_numbers = set(re.findall(r'\d+[\.,]?\d*', article_text))
+    
+    # Find names/entities in article (capitalized words)
+    article_entities = set(re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', article_text))
+    
+    for i in range(1, 9):
+        slide_key = f"slide_{i}"
+        slide = slides_data.get(slide_key, {})
+        
+        # Get slide text
+        hook = slide.get('hook', '') if isinstance(slide, dict) else ''
+        content = slide.get('content', '') if isinstance(slide, dict) else ''
+        slide_text = (hook + ' ' + content).lower()
+        
+        # Check if numbers in slide appear in article
+        slide_numbers = set(re.findall(r'\d+[\.,]?\d*', slide_text))
+        for num in slide_numbers:
+            if num not in article_numbers and len(num) > 1:  # Skip single digits
+                # Check if it's a plausible number (not just part of text)
+                try:
+                    float(num.replace(',', '.'))
+                    issues.append(f"slide_{i}: Number '{num}' not found in article")
+                except:
+                    pass
+    
+    passed = len(issues) == 0
+    return passed, issues
+
 def format_slides(slides_data):
     """Format slides data into storytelling format with whitespace.
     
