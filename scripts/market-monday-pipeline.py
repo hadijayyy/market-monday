@@ -856,28 +856,28 @@ Jangan tambah informasi dari luar artikel.
 
 ## Langkah 2 — Tulis 8 Slide
 
-Slide 1 — Hook (150–300 chars)
+Slide 1 — Hook (2–3 kalimat)
 Angka spesifik dari artikel + konteks + urgensi. Buat orang berhenti scroll.
 
-Slide 2 — Apa yang Terjadi (300–400 chars)
+Slide 2 — Apa yang Terjadi (3–4 kalimat)
 Fakta utama: siapa melakukan apa, kapan. Padat, tanpa basa-basi.
 
-Slide 3 — Kenapa Ini Penting (300–400 chars)
+Slide 3 — Kenapa Ini Penting (3–4 kalimat)
 Konteks: kenapa ini terjadi sekarang? Dukung dengan angka dari artikel.
 
-Slide 4 — Siapa yang Terdampak (300–400 chars)
+Slide 4 — Siapa yang Terdampak (3–4 kalimat)
 Fokus ke orang kecil: petani, pedagang, buruh, UMKM. Bukan korporasi.
 
-Slide 5 — Fakta yang Kurang Diketahui (300–400 chars)
+Slide 5 — Fakta yang Kurang Diketahui (3–4 kalimat)
 Satu fakta dari artikel yang jarang disorot media umum.
 
-Slide 6 — Analisis Dampak Lanjutan (300–400 chars)
+Slide 6 — Analisis Dampak Lanjutan (3–4 kalimat)
 Inferensi logis dari fakta artikel. Wajib buka dengan: "Kalau tren ini berlanjut..." atau frasa serupa yang jelas ini analisis, bukan fakta artikel.
 
-Slide 7 — Yang Masih Belum Jelas (300–400 chars)
+Slide 7 — Yang Masih Belum Jelas (3–4 kalimat)
 Ketidakpastian nyata dari artikel. Apa yang masih menggantung atau belum dijawab?
 
-Slide 8 — Opini + CTA (300–400 chars)
+Slide 8 — Opini + CTA (2–3 kalimat)
 Satu pendapat tajam berbasis fakta. Boleh tambahkan empati personal sebagai penulis.
 Tutup dengan: "Menurut lo, [pertanyaan spesifik]?"
 Sertakan URL artikel di baris terakhir.
@@ -893,10 +893,11 @@ Format:
 - Slide 6: inferensi logis, wajib di-flag sebagai analisis.
 - Slide 8: opini + empati personal dibolehkan.
 - Bahasa: Indonesia gaul yang kredibel. "Lo/gue" boleh, tapi sparingly.
-- Gunakan \\n\\n untuk line break dalam JSON string.
+- Gunakan \\n\\n untuk line break antar kalimat dalam JSON string.
+- Setiap kalimat harus dipisahkan dengan spasi ganda (\\n\\n) agar mudah dibaca.
 - Dilarang: em dash ( — ), hashtag, frasa kosong seperti "hal ini menunjukkan bahwa".
 - Jangan sebut kata "slide" di dalam konten.
-- Char count adalah target, bukan hard limit — prioritaskan kualitas."""
+- Jumlah kalimat adalah target — prioritaskan kualitas dan kejelasan."""
 
     user_prompt = f"""JUDUL: {article['title']}
 SUMBER: {article['source']}
@@ -924,10 +925,10 @@ ARTIKEL:
                     is_valid, issues = validate_hook(hook)
                     
                     if is_valid:
-                        # Validate slide lengths (2-8 must be >= 150 chars)
-                        lengths_valid, short_slides = validate_slide_lengths(slides_data)
+                        # Validate sentence counts
+                        sentences_valid, sentence_issues = validate_slide_sentences(slides_data)
                         
-                        if lengths_valid:
+                        if sentences_valid:
                             # Validate grounding (no hallucination)
                             grounding_valid, grounding_issues = validate_grounding(slides_data, article_content)
                             
@@ -940,9 +941,9 @@ ARTIKEL:
                                     log(f"[LLM] Retrying with same model...")
                                 continue
                         else:
-                            # Log which slides are too short
-                            short_info = ", ".join([f"slide_{s[0]}={s[1]}c" for s in short_slides])
-                            log(f"[LLM] ⚠️ Slides too short: {short_info}", "WARN")
+                            # Log sentence count issues
+                            sentence_info = ", ".join(sentence_issues)
+                            log(f"[LLM] ⚠️ Sentence count: {sentence_info}", "WARN")
                             if attempt < MAX_HOOK_RETRIES - 1:
                                 log(f"[LLM] Retrying with same model...")
                             continue
@@ -1031,28 +1032,57 @@ def validate_hook(hook):
     is_valid = len(issues) == 0
     return is_valid, issues
 
-def validate_slide_lengths(slides_data):
-    """Validate that slides 2-8 have minimum 150 chars.
+def count_sentences(text):
+    """Count sentences in text by splitting on sentence endings."""
+    if not text:
+        return 0
+    # Split by sentence endings followed by space or end
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    # Filter out empty strings
+    sentences = [s for s in sentences if s.strip()]
+    return len(sentences)
+
+def validate_slide_sentences(slides_data):
+    """Validate sentence counts per slide.
     
-    Returns: (is_valid, short_slides)
+    Slide 1: 2-3 sentences
+    Slides 2-7: 3-4 sentences
+    Slide 8: 2-3 sentences
+    
+    Returns: (is_valid, issues)
     """
-    short_slides = []
-    min_chars = 150  # Realistic minimum for informal content
+    issues = []
     
-    for i in range(2, 9):  # Slides 2-8
-        slide_key = f"slide_{i}"
-        slide = slides_data.get(slide_key, {})
-        
-        # Get content (could be hook or content field)
-        hook = slide.get('hook', '') if isinstance(slide, dict) else ''
+    # Slide 1: 2-3 sentences
+    slide1 = slides_data.get('slide_1', {})
+    hook = slide1.get('hook', '') if isinstance(slide1, dict) else ''
+    content = slide1.get('content', '') if isinstance(slide1, dict) else ''
+    text = hook if hook else content
+    sentences = count_sentences(text)
+    if not (2 <= sentences <= 3):
+        issues.append(f"slide_1: {sentences} sentences (need 2-3)")
+    
+    # Slides 2-7: 3-4 sentences
+    for i in range(2, 8):
+        slide = slides_data.get(f'slide_{i}', {})
         content = slide.get('content', '') if isinstance(slide, dict) else ''
-        text = hook if hook else content
-        
-        if len(text) < min_chars:
-            short_slides.append((i, len(text)))
+        hook = slide.get('hook', '') if isinstance(slide, dict) else ''
+        text = content if content else hook
+        sentences = count_sentences(text)
+        if not (3 <= sentences <= 4):
+            issues.append(f"slide_{i}: {sentences} sentences (need 3-4)")
     
-    is_valid = len(short_slides) == 0
-    return is_valid, short_slides
+    # Slide 8: 2-3 sentences
+    slide8 = slides_data.get('slide_8', {})
+    content = slide8.get('content', '') if isinstance(slide8, dict) else ''
+    hook = slide8.get('hook', '') if isinstance(slide8, dict) else ''
+    text = content if content else hook
+    sentences = count_sentences(text)
+    if not (2 <= sentences <= 3):
+        issues.append(f"slide_8: {sentences} sentences (need 2-3)")
+    
+    is_valid = len(issues) == 0
+    return is_valid, issues
 
 def validate_grounding(slides_data, article_text):
     """Validate that every factual claim in slides appears in the article.
