@@ -784,55 +784,45 @@ def generate_content(article, article_content):
     Primary: mimo-v2.5 (fast, good Indonesian)
     Fallback: minimax-m3 (slower but reliable)
     """
-    system_prompt = """[ROLE] Extract slides from financial articles into JSON. Think briefly. Output directly.
+    system_prompt = """Output JSON only. Start with {. No preamble.
+
+Extract 8 slides from the article below.
 
 [SLIDES]
-slide_1: HOOK (150-300 chars, WAJIB ADA ANGKA + KONTEKS + DRAMA)
+slide_1: HOOK — 150-300 chars. WAJIB: angka + konteks + drama.
+  ✅ "4.000 pekerja Nike dirumahkan! Di tengah ekonomi goyah, ini baru permulaan."
+  ❌ "Bos buruh buka suara soal PHK massal." (tanpa angka)
 
-✅ GOOD:
-"4.000 pekerja Nike dirumahkan! Angka ini bikin merinding, apalagi ini terjadi di tengah ekonomi yang belum stabil."
-
-❌ BAD:
-"Bos buruh baru aja buka suara soal fenomena PHK massal." (TANPA ANGKA)
-
-❌ BAD:
-"Ada berita tentang judi olahraga yang harus kamu ketahui." (TANPA ANGKA)
-
-slide_2: APA YANG TERJADI (250-450 chars)
-slide_3: KENAPA PENTING (250-450 chars)
-slide_4: SIAPA YANG TERDAMPAK (250-450 chars)
-slide_5: SUDUT PANDANG (250-450 chars)
-slide_6: DAMPAK LEBIH LUAS (250-450 chars)
-slide_7: YANG BELUM JELAS (250-450 chars)
-slide_8: OPINI + FAKTA + CTA (250-450 chars + URL)
-- WAJIB ada pertanyaan untuk pembaca: "Menurut lo, gimana...?"
-- Contoh: "Menurut lo, gimana cara stop judi online?"
+slide_2: APA YANG TERJADI — 300-500 chars
+slide_3: KENAPA PENTING — 300-500 chars
+slide_4: SIAPA YANG TERDAMPAK — 300-500 chars
+slide_5: SUDUT PANDANG — 300-500 chars
+slide_6: DAMPAK LEBIH LUAS — 300-500 chars
+slide_7: YANG BELUM JELAS — 300-500 chars
+slide_8: OPINI + FAKTA + CTA — 300-500 chars + URL
+  WAJIB: akhiri dengan pertanyaan "Menurut lo, gimana...?"
 
 [RULES]
-- Bahasa Indonesia sehari-hari, gak formal
-- Blank line antar kalimat = \\n\\n di JSON string
-- NO: em dash, hashtag, AI phrases
-- NO REPEAT: Each slide provides NEW info, don't repeat main fact
-- Slide 3-7: Empati ke orang kecil (pedagang, UMKM, pekerja)
+- Bahasa Indonesia sehari-hari, bukan formal
+- Newline antar kalimat = \\n\\n dalam JSON string
+- Jangan pakai: em dash, hashtag, frasa AI generik
+- Tiap slide = info BARU. Jangan ulang fakta dari slide sebelumnya
+- Slide 3–7: empati ke orang kecil (pedagang, UMKM, pekerja)
+- TOPIC LOCK: satu topik, satu sudut. Jangan campur cerita lain. Jangan tambah info yang tidak ada di artikel.
 
-[TOPIC LOCK]
-- STICK TO THE EXACT SINGLE TOPIC AND ANGLE OF THE ARTICLE.
-- Do NOT mix multiple stories or angles into one thread.
-- Do NOT add information not present in the article.
-
-[OUTPUT]
-JSON only. Start with {. No explanation. No thinking."""
+[JSON SCHEMA]
+{"slide_1":"...","slide_2":"...","slide_3":"...","slide_4":"...","slide_5":"...","slide_6":"...","slide_7":"...","slide_8":"..."}"""
 
     user_prompt = f"""JUDUL: {article['title']}
 SUMBER: {article['source']}
 URL: {article['url']}
 
 ARTIKEL:
-{article_content[:1000]}"""
+{article_content[:1500]}"""
 
 
     # Try models in order (primary → fallback) with hook validation
-    MAX_HOOK_RETRIES = 1  # Reduced from 3 (fail fast)
+    MAX_HOOK_RETRIES = 1  # Fail fast
     
     for model in LLM_MODELS:
         for attempt in range(MAX_HOOK_RETRIES):
