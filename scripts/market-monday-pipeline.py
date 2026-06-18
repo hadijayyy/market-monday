@@ -46,7 +46,7 @@ LLM_API_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 LLM_MODELS = ["mimo-v2.5", "minimax-m3"]  # Primary → Fallback (reasoning model)
 DRY_RUN = False  # Set to True via --dry-run flag
 LLM_MAX_TOKENS = 6000
-LLM_TIMEOUT = 90
+LLM_TIMEOUT = 60  # 60s per model (reduced from 90s)
 
 # SIMILARITY CONFIG (from Press Box)
 SIMILARITY_THRESHOLD = 0.35  # Jaccard similarity threshold for dedup
@@ -787,16 +787,16 @@ def generate_content(article, article_content):
     system_prompt = """[ROLE] Extract slides from financial articles into JSON. Think briefly. Output directly.
 
 [SLIDES]
-slide_1: HOOK (150-300 chars, ANGKA + KONTEKS + DRAMA)
+slide_1: HOOK (150-300 chars, WAJIB ADA ANGKA + KONTEKS + DRAMA)
 
 ✅ GOOD:
-"Judi olahraga udah tembus Rp3.168 triliun! Angka gila ini jadi mesin uang raksasa, tapi di baliknya banyak cerita sedih dari orang kecil yang terjebak."
+"4.000 pekerja Nike dirumahkan! Angka ini bikin merinding, apalagi ini terjadi di tengah ekonomi yang belum stabil."
 
 ❌ BAD:
-"Judi olahraga di Indonesia sedang mengalami peningkatan yang signifikan dalam beberapa tahun terakhir."
+"Bos buruh baru aja buka suara soal fenomena PHK massal." (TANPA ANGKA)
 
 ❌ BAD:
-"Ada berita tentang judi olahraga yang harus kamu ketahui."
+"Ada berita tentang judi olahraga yang harus kamu ketahui." (TANPA ANGKA)
 
 slide_2: APA YANG TERJADI (250-450 chars)
 slide_3: KENAPA PENTING (250-450 chars)
@@ -812,26 +812,13 @@ slide_8: OPINI + FAKTA + CTA (250-450 chars + URL)
 - Bahasa Indonesia sehari-hari, gak formal
 - Blank line antar kalimat = \\n\\n di JSON string
 - NO: em dash, hashtag, AI phrases
-- NO REPEAT: Each slide must provide NEW information
-- NO REPEAT: Don't restate the main number/fact from slide 1
-- NO REPEAT: Don't repeat key phrases across slides
-- SYNONYMS: Use "telur ayam", "protein hewani", "bahan pangan" (not just "telur")
-- SYNONYMS: Use "program pemerintah", "kebijakan", " subsidi" (not just "MBG")
-- Vary vocabulary: use synonyms, different angles
-- Slide 2: WHAT happened (new details, not hook restatement)
-- Slide 3: WHY it matters (implications, not repeated facts)
-- Slide 4: WHO is affected (different people than slide 1)
-- Slide 5: Different perspective (business, social, etc.)
-- Slide 6: Wider impact (beyond immediate topic)
-- Slide 7: What's unclear (questions, not repeated facts)
-- Slide 8: Opinion + CTA + URL
+- NO REPEAT: Each slide provides NEW info, don't repeat main fact
 - Slide 3-7: Empati ke orang kecil (pedagang, UMKM, pekerja)
 
 [TOPIC LOCK]
 - STICK TO THE EXACT SINGLE TOPIC AND ANGLE OF THE ARTICLE.
 - Do NOT mix multiple stories or angles into one thread.
 - Do NOT add information not present in the article.
-- Do NOT expand scope beyond the article's focus.
 
 [OUTPUT]
 JSON only. Start with {. No explanation. No thinking."""
@@ -841,11 +828,11 @@ SUMBER: {article['source']}
 URL: {article['url']}
 
 ARTIKEL:
-{article_content[:2000]}"""
+{article_content[:1000]}"""
 
 
     # Try models in order (primary → fallback) with hook validation
-    MAX_HOOK_RETRIES = 3
+    MAX_HOOK_RETRIES = 1  # Reduced from 3 (fail fast)
     
     for model in LLM_MODELS:
         for attempt in range(MAX_HOOK_RETRIES):
@@ -914,9 +901,13 @@ def validate_hook(hook):
                      'air', 'listrik', 'transport', 'logistik', 'komoditas',
                      'amdk', 'sni', 'kemasan', 'pedagang', 'umkm', 'usaha',
                      'utang', 'bank', 'pinjam', 'kredit', 'aset', 'dana', 'modal',
-                     'reksadana', 'obligasi', 'deposito', ' tabungan', 'kas',
+                     'reksadana', 'obligasi', 'deposito', 'tabungan', 'kas',
                      'piutang', 'hutang', 'anggaran', 'belanja', 'pajak',
-                     'rupiah', 'emiten', 'persero', 'pt ', 'tbk']
+                     'rupiah', 'emiten', 'persero', 'pt', 'tbk',
+                     # Employment/Labor
+                     'buruh', 'pekerja', 'karyawan', 'aryawan', 'tenaga kerja',
+                     'lapangan kerja', 'phk', 'pemutusan', 'industri', 'pabrik',
+                     'manufaktur', 'produksi', 'ekspor', 'impor']
     has_konteks = any(word.lower() in hook.lower() for word in konteks_words)
     if not has_konteks:
         issues.append("GAK ADA KONTEKST YANG JELAS")
