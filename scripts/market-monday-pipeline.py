@@ -70,27 +70,42 @@ RSS_SOURCES = [
 IMPACT_CRASH = {          # +30 - BAD news that moves markets
     "crash", "crisis", "recession", "collapse", "plunge", "default",
     "bankruptcy", "layoff", "layoffs", "unemployment", "emergency",
-    "panic", "meltdown", "turmoil", "slump", "downturn", "insolvency", "implosion"
+    "panic", "meltdown", "turmoil", "slump", "downturn", "insolvency", "implosion",
+    # Indonesian
+    "anjlok", "ambruk", "jatuh", "gagal", "bangkrut", "phk", "resesi",
+    "krisis", "darurat", "panik", "merosot", "menurun", "turun"
 }
 
 IMPACT_SURGE = {          # +25 - GOOD news that moves markets
     "surge", "rally", "soar", "boom", "breakthrough", "record",
     "historic", "milestone", "all-time high", "first time", "skyrocket",
-    "outperform", "beat expectations", "strongest"
+    "outperform", "beat expectations", "strongest",
+    # Indonesian
+    "naik", "kenaikan", "meningkat", "melambung", "meroket", "menembus",
+    "tembus", "rekor", "tertinggi", "terbesar", "pertama", "berhasil",
+    "positif", "optimistis", "pulih", " rebound"
 }
 
 IMPACT_NEGATIVE = {       # +20 - Negative but not crash-level
     "warning", "downgrade", "cut", "reduce", "slowdown", "weaken",
-    "decline", "drop", "fall", "tumble", "sink", "miss", "miss expectations"
+    "decline", "drop", "fall", "tumble", "sink", "miss", "miss expectations",
+    # Indonesian
+    "peringatan", "potong", "kurang", "perlambatan", "melemah",
+    "penurunan", "turun", "merosot", "gagal", "meleset"
 }
 
 # ── LAYER 2: URGENCY SIGNALS (breaking > analysis) ─────────────────────────
 URGENCY_HIGH = {          # +25 - Breaking/urgent
-    "breaking", "just in", "alert", "emergency", "urgent", "flash"
+    "breaking", "just in", "alert", "emergency", "urgent", "flash",
+    # Indonesian
+    "terbaru", "baru", "mendesak", "darurat", "segera", "breaking news"
 }
 
 URGENCY_MEDIUM = {        # +15 - Timely
-    "today", "this week", "imminent", "announce", "reveals", "expects"
+    "today", "this week", "imminent", "announce", "reveals", "expects",
+    # Indonesian
+    "hari ini", "minggu ini", "akan datang", "mengumumkan", "menguak",
+    "memprediksi", "estimasi", "proyeksi"
 }
 
 # ── LAYER 3: INDONESIAN RELEVANCE (local impact) ───────────────────────────
@@ -120,6 +135,11 @@ BORING_KEYWORDS = {       # -15 - Routine/dry reports
 OPINION_KEYWORDS = {      # -20 - Opinion/analysis (not factual news)
     "opinion", "analysis", "column", "editorial", "commentary",
     "perspective", "viewpoint", "says analyst", "expert says"
+}
+
+VIDEO_KEYWORDS = {        # -100 - Skip video-based articles
+    "video", "watch", "nonton", "tonton", "footage", "clip",
+    "livestream", "live streaming", "replay"
 }
 
 # ── LAYER 5: VIRAL FACTORS (engagement drivers) ────────────────────────────
@@ -515,6 +535,12 @@ def score_candidate(article, posted, feedback):
             score -= 20
             break
 
+    # ── VIDEO EXCLUSION (skip video-based articles) ────────────────────────
+    for kw in VIDEO_KEYWORDS:
+        if kw in title:  # Check title only, not description
+            score -= 100
+            break
+
     # ── LAYER 5: VIRAL FACTORS (engagement drivers) ───────────────────────
     viral_count = 0
     for factor, keywords in VIRAL_FACTORS.items():
@@ -758,27 +784,36 @@ def generate_content(article, article_content):
     Primary: mimo-v2.5 (fast, good Indonesian)
     Fallback: minimax-m3 (slower but reliable)
     """
-    system_prompt = """[ROLE] Extract slides from financial articles into JSON.
+    system_prompt = """[ROLE] Extract slides from financial articles into JSON. Think briefly. Output directly.
 
 [SLIDES]
 slide_1: HOOK (150-300 chars, ANGKA + KONTEKS + DRAMA)
+- Contoh: "Judi olahraga udah tembus Rp3.168 triliun! Angka gila ini jadi mesin uang raksasa, tapi di baliknya banyak cerita sedih."
 slide_2: APA YANG TERJADI (150-450 chars)
 slide_3: KENAPA PENTING (150-450 chars)
 slide_4: SIAPA YANG TERDAMPAK (150-450 chars)
 slide_5: SUDUT PANDANG (150-450 chars)
 slide_6: DAMPAK LEBIH LUAS (150-450 chars)
 slide_7: YANG BELUM JELAS (150-450 chars)
-slide_8: OPINI + FAKTA (150-450 chars + URL)
+slide_8: OPINI + FAKTA + CTA (150-450 chars + URL)
+- WAJIB ada pertanyaan untuk pembaca: "Menurut lo, gimana...?"
+- Contoh: "Menurut lo, gimana cara stop judi online?"
 
 [RULES]
 - Bahasa Indonesia sehari-hari, gak formal
-- Blank line antar kalimat = \n\n di JSON string
+- Blank line antar kalimat = \\n\\n di JSON string
 - NO: em dash, hashtag, AI phrases
 - Slide 3-7: Empati ke orang kecil (pedagang, UMKM, pekerja)
-- Slide 8: state opinion didukung fakta dari artikel + URL
+- Slide 8: opinion + fakta + CTA pertanyaan + URL
+
+[TOPIC LOCK]
+- STICK TO THE EXACT SINGLE TOPIC AND ANGLE OF THE ARTICLE.
+- Do NOT mix multiple stories or angles into one thread.
+- Do NOT add information not present in the article.
+- Do NOT expand scope beyond the article's focus.
 
 [OUTPUT]
-JSON only. Start with {. No explanation."""
+JSON only. Start with {. No explanation. No thinking."""
 
     user_prompt = f"""JUDUL: {article['title']}
 SUMBER: {article['source']}
