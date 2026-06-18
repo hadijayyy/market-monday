@@ -812,8 +812,20 @@ slide_8: OPINI + FAKTA + CTA (150-450 chars + URL)
 - Bahasa Indonesia sehari-hari, gak formal
 - Blank line antar kalimat = \\n\\n di JSON string
 - NO: em dash, hashtag, AI phrases
+- NO REPEAT: Each slide must provide NEW information
+- NO REPEAT: Don't restate the main number/fact from slide 1
+- NO REPEAT: Don't repeat key phrases across slides
+- SYNONYMS: Use "telur ayam", "protein hewani", "bahan pangan" (not just "telur")
+- SYNONYMS: Use "program pemerintah", "kebijakan", " subsidi" (not just "MBG")
+- Vary vocabulary: use synonyms, different angles
+- Slide 2: WHAT happened (new details, not hook restatement)
+- Slide 3: WHY it matters (implications, not repeated facts)
+- Slide 4: WHO is affected (different people than slide 1)
+- Slide 5: Different perspective (business, social, etc.)
+- Slide 6: Wider impact (beyond immediate topic)
+- Slide 7: What's unclear (questions, not repeated facts)
+- Slide 8: Opinion + CTA + URL
 - Slide 3-7: Empati ke orang kecil (pedagang, UMKM, pekerja)
-- Slide 8: opinion + fakta + CTA pertanyaan + URL
 
 [TOPIC LOCK]
 - STICK TO THE EXACT SINGLE TOPIC AND ANGLE OF THE ARTICLE.
