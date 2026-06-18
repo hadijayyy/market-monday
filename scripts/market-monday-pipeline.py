@@ -822,7 +822,7 @@ ARTIKEL:
 
 
     # Try models in order (primary → fallback) with hook validation
-    MAX_HOOK_RETRIES = 1  # Fail fast
+    MAX_HOOK_RETRIES = 2  # Allow retry for short slides
     
     for model in LLM_MODELS:
         for attempt in range(MAX_HOOK_RETRIES):
@@ -839,8 +839,19 @@ ARTIKEL:
                     is_valid, issues = validate_hook(hook)
                     
                     if is_valid:
-                        log(f"[LLM] ✅ Success with {model} - Hook valid: {hook[:50]}...")
-                        return slides_data
+                        # Validate slide lengths (2-8 must be >= 200 chars)
+                        lengths_valid, short_slides = validate_slide_lengths(slides_data)
+                        
+                        if lengths_valid:
+                            log(f"[LLM] ✅ Success with {model} - Hook valid: {hook[:50]}...")
+                            return slides_data
+                        else:
+                            # Log which slides are too short
+                            short_info = ", ".join([f"slide_{s[0]}={s[1]}c" for s in short_slides])
+                            log(f"[LLM] ⚠️ Slides too short: {short_info}", "WARN")
+                            if attempt < MAX_HOOK_RETRIES - 1:
+                                log(f"[LLM] Retrying with same model...")
+                            continue
                     else:
                         log(f"[LLM] ⚠️ Hook invalid: {', '.join(issues)}", "WARN")
                         if attempt < MAX_HOOK_RETRIES - 1:
@@ -905,7 +916,7 @@ def validate_hook(hook):
     # Check 3: DRAMA (emotional/dramatic words)
     drama_words = ['naik', 'turun', 'anjlok', 'meledak', 'ambruk', 'jatuh', 'rally',
                    'kosong', 'langka', 'mahal', 'murah', 'sesak', 'miskin', 'kaya',
-                   'PHK', 'tutup', 'bangkrut', 'gagal', 'guncang', 'terancam',
+                   'phk', 'tutup', 'bangkrut', 'gagal', 'guncang', 'terancam',
                    'tapi', 'malah', 'justru', 'tetep', 'terus', 'makin',
                    'hilang', 'ditarik', 'tarik', 'belum', 'gigit', 'was-wada',
                    'kaget', 'terkejut', 'miris', 'menyedihkan']
@@ -915,6 +926,29 @@ def validate_hook(hook):
     
     is_valid = len(issues) == 0
     return is_valid, issues
+
+def validate_slide_lengths(slides_data):
+    """Validate that slides 2-8 have minimum 200 chars.
+    
+    Returns: (is_valid, short_slides)
+    """
+    short_slides = []
+    min_chars = 200
+    
+    for i in range(2, 9):  # Slides 2-8
+        slide_key = f"slide_{i}"
+        slide = slides_data.get(slide_key, {})
+        
+        # Get content (could be hook or content field)
+        hook = slide.get('hook', '') if isinstance(slide, dict) else ''
+        content = slide.get('content', '') if isinstance(slide, dict) else ''
+        text = hook if hook else content
+        
+        if len(text) < min_chars:
+            short_slides.append((i, len(text)))
+    
+    is_valid = len(short_slides) == 0
+    return is_valid, short_slides
 def format_slides(slides_data):
     """Format slides data into storytelling format with whitespace.
     
