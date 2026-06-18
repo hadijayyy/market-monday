@@ -71,27 +71,27 @@ IMPACT_CRASH = {          # +30 - BAD news that moves markets
     "crash", "crisis", "recession", "collapse", "plunge", "default",
     "bankruptcy", "layoff", "layoffs", "unemployment", "emergency",
     "panic", "meltdown", "turmoil", "slump", "downturn", "insolvency", "implosion",
-    # Indonesian
+    # Indonesian (context-aware: avoid "turun ke jalan", "turun dari bus")
     "anjlok", "ambruk", "jatuh", "gagal", "bangkrut", "phk", "resesi",
-    "krisis", "darurat", "panik", "merosot", "menurun", "turun"
+    "krisis", "darurat", "panik", "merosot", "menurun"
 }
 
 IMPACT_SURGE = {          # +25 - GOOD news that moves markets
     "surge", "rally", "soar", "boom", "breakthrough", "record",
     "historic", "milestone", "all-time high", "first time", "skyrocket",
     "outperform", "beat expectations", "strongest",
-    # Indonesian
-    "naik", "kenaikan", "meningkat", "melambung", "meroket", "menembus",
+    # Indonesian (context-aware: avoid "naik kereta", "turun ke jalan")
+    "kenaikan", "meningkat", "melambung", "meroket", "menembus",
     "tembus", "rekor", "tertinggi", "terbesar", "pertama", "berhasil",
-    "positif", "optimistis", "pulih", " rebound"
+    "positif", "optimistis", "pulih", "rebound"
 }
 
 IMPACT_NEGATIVE = {       # +20 - Negative but not crash-level
     "warning", "downgrade", "cut", "reduce", "slowdown", "weaken",
     "decline", "drop", "fall", "tumble", "sink", "miss", "miss expectations",
-    # Indonesian
+    # Indonesian (context-aware: avoid "turun ke jalan")
     "peringatan", "potong", "kurang", "perlambatan", "melemah",
-    "penurunan", "turun", "merosot", "gagal", "meleset"
+    "penurunan", "merosot", "gagal", "meleset"
 }
 
 # ── LAYER 2: URGENCY SIGNALS (breaking > analysis) ─────────────────────────
@@ -479,6 +479,26 @@ def score_candidate(article, posted, feedback):
     if not is_fresh(article.get("published", ""), hours=24):
         return -500
 
+    # Skip if not economic/financial topic
+    ECONOMIC_KEYWORDS = [
+        "harga", "saham", "ihsg", "idx", "rupiah", "dollar", "bi rate", "suku bunga",
+        "inflasi", "ekonomi", "pasar", "investasi", "komoditas", "cpo", "sawit",
+        "pertambangan", "energi", "listrik", "bbm", "pertamax", "solar", "industri",
+        "manufaktur", "ekspor", "impor", "neraca", "defisit", "surplus", "utang",
+        "kredit", "pinjaman", "bank", "ojk", "emiten", "dividen", "laba", "rugi",
+        "phk", "pekerja", "gaji", "upah", "tunjangan", "perpajakan", "pajak",
+        "reksadana", "obligasi", "deposito", "asuransi", "properti", "rumah", "kpr",
+        "kripto", "bitcoin", "ethereum", "blockchain", "startup", "fintech", "digital",
+        "pemerintah", "kementerian", "regulasi", "kebijakan", "apbn", "apbd",
+        "cadangan devisa", "balance of payment", "gdp", "pdb", "pertumbuhan",
+        "resesi", "stagnasi", "perlambatan", "pemulihan", "rebound", "rally",
+        "anomali", "manipulasi", "korupsi", "skandal", "penipuan", "gelap"
+    ]
+    
+    has_economic_keyword = any(kw in combined for kw in ECONOMIC_KEYWORDS)
+    if not has_economic_keyword:
+        return -200  # Penalize non-economic articles
+
     score = 0
 
     # ── LAYER 1: IMPACT KEYWORDS (market-moving) ──────────────────────────
@@ -784,41 +804,74 @@ def generate_content(article, article_content):
     Primary: mimo-v2.5 (fast, good Indonesian)
     Fallback: minimax-m3 (slower but reliable)
     """
-    system_prompt = """Output JSON only. Start with {. No preamble.
+    system_prompt = """# ROLE
+Kamu adalah content writer ekonomi pasar Indonesia. Nada: langsung, jujur, empati ke orang kecil — bukan wartawan formal.
 
-Extract 8 slides from the article below.
+# CONTEXT
+Kamu akan menerima satu artikel berita ekonomi Indonesia. Tugasmu adalah mengubah artikel itu menjadi 8 slide konten Threads yang informatif dan relatable.
 
-[SLIDES]
-slide_1: HOOK — 150-300 chars. WAJIB: angka + konteks + drama.
-  ✅ "4.000 pekerja Nike dirumahkan! Di tengah ekonomi goyah, ini baru permulaan."
-  ❌ "Bos buruh buka suara soal PHK massal." (tanpa angka)
+Batasan ketat:
+- Slide 1–7: HANYA gunakan fakta yang ada di artikel (nama, angka, tanggal, lokasi, kejadian).
+- Slide 8: Boleh tambahkan opini tajam berbasis fakta + empati personal sebagai penulis.
+- Slide 6: Boleh inferensi logis dari fakta artikel — tapi harus di-flag sebagai analisis, bukan fakta.
 
-slide_2: APA YANG TERJADI — 300-500 chars
-slide_3: KENAPA PENTING — 300-500 chars
-slide_4: SIAPA YANG TERDAMPAK — 300-500 chars
-slide_5: SUDUT PANDANG — 300-500 chars
-slide_6: DAMPAK LEBIH LUAS — 300-500 chars
-slide_7: YANG BELUM JELAS — 300-500 chars
-slide_8: OPINI + FAKTA + CTA — 300-500 chars + URL
-  WAJIB: akhiri dengan pertanyaan "Menurut lo, gimana...?"
+# TASK
+Ikuti langkah ini secara berurutan:
 
-[RULES]
-- Bahasa Indonesia sehari-hari, bukan formal
-- Newline antar kalimat = \\n\\n dalam JSON string
-- Jangan pakai: em dash, hashtag, frasa AI generik
-- Tiap slide = info BARU. Jangan ulang fakta dari slide sebelumnya
-- Slide 3–7: empati ke orang kecil (pedagang, UMKM, pekerja)
-- TOPIC LOCK: satu topik, satu sudut. Jangan campur cerita lain. Jangan tambah info yang tidak ada di artikel.
+## Langkah 1 — Ekstrak Fakta
+Baca artikel. Catat HANYA fakta eksplisit: siapa, apa, kapan, berapa, di mana.
+Jangan tambah informasi dari luar artikel.
 
-[JSON SCHEMA]
-{"slide_1":"...","slide_2":"...","slide_3":"...","slide_4":"...","slide_5":"...","slide_6":"...","slide_7":"...","slide_8":"..."}"""
+## Langkah 2 — Tulis 8 Slide
+
+Slide 1 — Hook (150–300 chars)
+Angka spesifik dari artikel + konteks + urgensi. Buat orang berhenti scroll.
+
+Slide 2 — Apa yang Terjadi (300–400 chars)
+Fakta utama: siapa melakukan apa, kapan. Padat, tanpa basa-basi.
+
+Slide 3 — Kenapa Ini Penting (300–400 chars)
+Konteks: kenapa ini terjadi sekarang? Dukung dengan angka dari artikel.
+
+Slide 4 — Siapa yang Terdampak (300–400 chars)
+Fokus ke orang kecil: petani, pedagang, buruh, UMKM. Bukan korporasi.
+
+Slide 5 — Fakta yang Kurang Diketahui (300–400 chars)
+Satu fakta dari artikel yang jarang disorot media umum.
+
+Slide 6 — Analisis Dampak Lanjutan (300–400 chars)
+Inferensi logis dari fakta artikel. Wajib buka dengan: "Kalau tren ini berlanjut..." atau frasa serupa yang jelas ini analisis, bukan fakta artikel.
+
+Slide 7 — Yang Masih Belum Jelas (300–400 chars)
+Ketidakpastian nyata dari artikel. Apa yang masih menggantung atau belum dijawab?
+
+Slide 8 — Opini + CTA (300–400 chars)
+Satu pendapat tajam berbasis fakta. Boleh tambahkan empati personal sebagai penulis.
+Tutup dengan: "Menurut lo, [pertanyaan spesifik]?"
+Sertakan URL artikel di baris terakhir.
+
+# OUTPUT
+Kembalikan HANYA JSON valid. Mulai dengan {}. Tanpa teks sebelum atau sesudah JSON.
+
+Format:
+{"slide_1":"...","slide_2":"...","slide_3":"...","slide_4":"...","slide_5":"...","slide_6":"...","slide_7":"...","slide_8":"..."}
+
+# RULES
+- Gunakan HANYA fakta dari artikel untuk slide 1–5 dan 7.
+- Slide 6: inferensi logis, wajib di-flag sebagai analisis.
+- Slide 8: opini + empati personal dibolehkan.
+- Bahasa: Indonesia gaul yang kredibel. "Lo/gue" boleh, tapi sparingly.
+- Gunakan \\n\\n untuk line break dalam JSON string.
+- Dilarang: em dash ( — ), hashtag, frasa kosong seperti "hal ini menunjukkan bahwa".
+- Jangan sebut kata "slide" di dalam konten.
+- Char count adalah target, bukan hard limit — prioritaskan kualitas."""
 
     user_prompt = f"""JUDUL: {article['title']}
 SUMBER: {article['source']}
 URL: {article['url']}
 
 ARTIKEL:
-{article_content[:1500]}"""
+{article_content[:3000]}"""
 
 
     # Try models in order (primary → fallback) with hook validation
@@ -981,8 +1034,8 @@ def validate_grounding(slides_data, article_text):
     # Extract key facts from article (numbers, names, percentages)
     import re
     
-    # Find numbers in article
-    article_numbers = set(re.findall(r'\d+[\.,]?\d*', article_text))
+    # Find numbers in article (exclude URL-like patterns)
+    article_numbers = set(re.findall(r'(?<![/\w])\d[\d.,]*\d(?![/\w])', article_text))
     
     # Find names/entities in article (capitalized words)
     article_entities = set(re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', article_text))
@@ -997,9 +1050,13 @@ def validate_grounding(slides_data, article_text):
         slide_text = (hook + ' ' + content).lower()
         
         # Check if numbers in slide appear in article
-        slide_numbers = set(re.findall(r'\d+[\.,]?\d*', slide_text))
+        # Skip URL numbers (d-8537189, /d-..., etc.)
+        slide_numbers = set(re.findall(r'(?<![/\w-])\d[\d.,]*\d(?![/\w-])', slide_text))
         for num in slide_numbers:
             if num not in article_numbers and len(num) > 1:  # Skip single digits
+                # Skip very long numbers (article IDs, etc.)
+                if len(num.replace('.', '').replace(',', '')) > 6:
+                    continue
                 # Check if it's a plausible number (not just part of text)
                 try:
                     float(num.replace(',', '.'))
