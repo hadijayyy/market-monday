@@ -8,10 +8,13 @@ Personal branding automation for Threads — economics & market insights for Ind
 ┌─────────────────────────────────────────────────────────────┐
 │  ⏰ SETIAP JAM :15                                         │
 │  market-monday-pipeline.py                                 │
-│  ├─ Scrape RSS (BBC, CNBC) → 30+ artikel                   │
-│  ├─ Score (controversy > news + topic boosts)              │
-│  ├─ Extract article (newspaper3k)                          │
+│  ├─ Scrape RSS (Detik, IDX, CNBC) → 30+ artikel           │
+│  ├─ Score (controversy + topic boosts + feedback)          │
+│  ├─ Extract article (curl + newspaper3k fallback)          │
+│  ├─ Dedup (Jaccard similarity 0.5 threshold)              │
 │  └─ LLM generate 8 slides → staging.json                   │
+│      ├─ Primary: mimo-v2.5 (fast, Indonesian)              │
+│      └─ Fallback: minimax-m3 (slower, reliable)            │
 ├─────────────────────────────────────────────────────────────┤
 │  ⏰ SETIAP JAM :35                                         │
 │  economy-post.py                                           │
@@ -36,12 +39,33 @@ Personal branding automation for Threads — economics & market insights for Ind
 
 ## Features
 
-- **RSS Scraping** — BBC Business, BBC World, CNBC
-- **Smart Scoring** — Controversy > News, viral factors, title optimization
+- **RSS Scraping** — Detik Finance, IDX Channel, CNBC Indonesia
+- **Smart Scoring** — Controversy + News + Topic boosts + Analytics feedback
 - **Analytics Feedback Loop** — Topic boosts from engagement data
-- **LLM Generation** — 8-slide threads with hook, story arc, and CTA
-- **Dedup** — URL-based tracking prevents reposts
+- **LLM Generation** — 8-slide threads with hook, story arc, and URL
+- **Dedup** — Jaccard similarity (0.5) + URL tracking prevents reposts
 - **Quality > Quantity** — Min 60min gap between posts
+- **Streaming** — SSE for faster LLM response
+- **Reasoning Bypass** — Optimized prompts for speed
+
+## Models
+
+| Model | Role | Speed | Indonesian |
+|-------|------|-------|------------|
+| **mimo-v2.5** | Primary | ~40s | ✅ Excellent |
+| **minimax-m3** | Fallback | ~60s | ✅ Good |
+
+> deepseek-v4-flash fails with Indonesian prompts (returns 0 content).
+
+## Hook Validation
+
+Every hook must contain 3 elements:
+
+| Element | Description | Example |
+|---------|-------------|---------|
+| **ANGKA** | Numbers, percentages, currency | Rp 301 T, 5%, 2025 |
+| **KONTEKST** | Finance-related words | bank, harga, saham, utang |
+| **DRAMA** | Emotional/dramatic words | naik, turun, tapi, mahal |
 
 ## Files
 
@@ -50,6 +74,7 @@ Personal branding automation for Threads — economics & market insights for Ind
 | `scripts/market-monday-pipeline.py` | Main pipeline (scrape + score + generate) |
 | `scripts/market-monday-analytics.py` | Analytics feedback loop |
 | `scripts/economy-post.py` | Post to Threads via API |
+| `scripts/economy-pipeline.py` | Legacy pipeline (deprecated) |
 
 ## Setup
 
@@ -96,6 +121,9 @@ Create `~/.hermes/threads_token.json`:
 ## Manual Run
 
 ```bash
+# Dry run (no posting)
+python3 ~/.hermes/scripts/market-monday-pipeline.py --dry-run
+
 # Generate content
 python3 ~/.hermes/scripts/market-monday-pipeline.py
 
@@ -106,15 +134,21 @@ python3 ~/.hermes/scripts/economy-post.py
 python3 ~/.hermes/scripts/market-monday-analytics.py
 ```
 
+## CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Generate content without posting to Threads |
+
 ## Data Files
 
 | File | Description |
 |------|-------------|
-| `data/staging.json` | Generated content waiting to post |
-| `data/posted_topics.json` | Posted URLs (dedup tracking) |
-| `data/market_feedback.json` | Analytics feedback (topic boosts) |
-| `data/market_analytics_report.md` | Latest analytics report |
-| `data/latest.md` | Latest generated content (readable) |
+| `~/.hermes/market_monday/staging.json` | Generated content waiting to post |
+| `~/.hermes/market_monday/posted_topics.json` | Posted URLs (dedup tracking) |
+| `~/.hermes/market_monday/market_feedback.json` | Analytics feedback (topic boosts) |
+| `~/.hermes/market_monday/latest.md` | Latest generated content (readable) |
+| `~/.hermes/market_monday/raw_llm_output.txt` | Raw LLM output for debugging |
 
 ## Analytics Feedback Loop
 
@@ -131,17 +165,17 @@ python3 ~/.hermes/scripts/market-monday-analytics.py
 
 | Topic | Keywords |
 |-------|----------|
-| inflasi | inflasi, inflation, harga, price, cpi |
-| suku_bunga | suku bunga, interest rate, bi rate |
-| global_market | wall street, saham, stock, ihsg |
-| currency | rupiah, dollar, yen, forex |
-| komoditas | minyak, oil, emas, gold |
-| property | properti, property, rumah, kpr |
-| tech_biz | ai, tech, startup, fintech |
-| kebijakan | pajak, tax, regulasi, policy |
-| karir | karir, career, gaji, phk, layoff |
-| energi | energi, energy, listrik, bbm |
-| global_event | perang, war, konflik, sanction |
+| inflasi | inflasi, harga, cpi, harga naik |
+| suku_bunga | suku bunga, bi rate, interest rate |
+| global_market | wall street, saham, ihsg, index |
+| currency | rupiah, dollar, forex, kurs |
+| komoditas | minyak, emas, gold, oil, gas |
+| property | properti, rumah, kpr, cicilan |
+| tech_biz | ai, tech, startup, fintech, digital |
+| kebijakan | pajak, regulasi, subsidy, kebijakan |
+| karir | karir, gaji, phk, layoffs, upah |
+| energi | energi, listrik, bbm, pertamax |
+| utang | utang, pinjam, kredit, bank, hutang |
 
 ### Boost Example
 
@@ -161,14 +195,37 @@ Pipeline will prefer suku_bunga and global_market topics, avoid property.
 
 Each thread has 8 slides:
 
-1. **Hook** — OUTRAGE/SHOCK with numbers (max 8 words)
-2. **Problem** — What happened?
-3. **Context** — Why it matters
-4. **Comparison** — Connect to Indonesia
-5. **Human Angle** — Quotes/emotion
-6. **Big Picture** — Implications
-7. **Stakes** — Why care now
-8. **CTA** — Provocative question + URL
+1. **Hook** — OUTRAGE/SHOCK with numbers + context + drama (max 300 chars)
+2. **Apa yang Terjadi** — What happened? (150-450 chars)
+3. **Kenapa Penting** — Why it matters (150-450 chars)
+4. **Siapa Terdampak** — Who's affected, empathy to small people (150-450 chars)
+5. **Sudut Pandang** — Different perspective (150-450 chars)
+6. **Dampak Lebih Luas** — Wider implications (150-450 chars)
+7. **Yang Belum Jelas** — What's unclear (150-450 chars)
+8. **Opini + Fakta** — Your opinion + facts from article + URL (150-450 chars)
+
+### Hook Examples
+
+✅ **Good:** "Menteri Keuangan Purbaya amankan Rp 301 T dari Bank Asia untuk proyek 2025-2029."
+- ANGKA: Rp 301 T
+- KONTEKST: Bank
+- DRAMA: amankan
+
+❌ **Bad:** "Pemerintah dapat pinjaman untuk pembangunan."
+- No numbers
+- No specific context
+- No drama/emotion
+
+## Scoring System
+
+| Factor | Weight | Description |
+|--------|--------|-------------|
+| Controversy | +30 | Crisis, crash, scandal keywords |
+| Viral Money | +25 | Price, cost, tax outrage |
+| Viral Human | +20 | Worker, family, affected people |
+| Freshness | +15 | Published < 2 hours ago |
+| Topic Boost | +10 | From analytics feedback |
+| Source Boost | +5 | Premium sources (CNBC, Detik) |
 
 ## Customization
 
@@ -204,6 +261,16 @@ TOPIC_PATTERNS = {
     "properti": ["properti", "property", "rumah", "kpr"],
 }
 ```
+
+## Performance
+
+| Metric | Before | After |
+|--------|--------|-------|
+| LLM Time | 46s | 40s |
+| Total Time | 50s | 45s |
+| Hook Validation | 3 attempts | 1-2 attempts |
+| Streaming | ❌ | ✅ |
+| Reasoning Tokens | 12K | 8K |
 
 ## Based On
 
