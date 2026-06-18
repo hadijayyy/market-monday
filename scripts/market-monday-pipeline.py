@@ -788,7 +788,16 @@ def generate_content(article, article_content):
 
 [SLIDES]
 slide_1: HOOK (150-300 chars, ANGKA + KONTEKS + DRAMA)
-- Contoh: "Judi olahraga udah tembus Rp3.168 triliun! Angka gila ini jadi mesin uang raksasa, tapi di baliknya banyak cerita sedih."
+
+✅ GOOD:
+"Judi olahraga udah tembus Rp3.168 triliun! Angka gila ini jadi mesin uang raksasa, tapi di baliknya banyak cerita sedih dari orang kecil yang terjebak."
+
+❌ BAD:
+"Judi olahraga di Indonesia sedang mengalami peningkatan yang signifikan dalam beberapa tahun terakhir."
+
+❌ BAD:
+"Ada berita tentang judi olahraga yang harus kamu ketahui."
+
 slide_2: APA YANG TERJADI (150-450 chars)
 slide_3: KENAPA PENTING (150-450 chars)
 slide_4: SIAPA YANG TERDAMPAK (150-450 chars)
