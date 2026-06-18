@@ -45,7 +45,7 @@ TITLE_CACHE_FILE = DATA_DIR / "title_cache.json"  # For Jaccard dedup
 LLM_API_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 LLM_MODELS = ["deepseek-v4-flash", "mimo-v2.5", "claude-sonnet-4.6"]  # Primary → Fallback → Fallback
 DRY_RUN = False  # Set to True via --dry-run flag
-LLM_MAX_TOKENS = 6000
+LLM_MAX_TOKENS = 6000  # Cap at 6K like Pressbox (was 4K)
 LLM_TIMEOUT = 90  # 90s per model (increased for retries)
 
 # SIMILARITY CONFIG (from Press Box)
@@ -706,10 +706,10 @@ def call_llm(system_prompt, user_prompt, model):
 
     try:
         r = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=LLM_TIMEOUT, stream=True)
-
+        
         if r.status_code != 200:
             log(f"LLM API error ({model}): HTTP {r.status_code}", "ERROR")
-            return None
+            return None, None
 
         # Process SSE stream
         content_parts = []
@@ -741,15 +741,12 @@ def call_llm(system_prompt, user_prompt, model):
         content = "".join(content_parts).strip()
         reasoning = "".join(reasoning_parts).strip()
 
-        # Use content first, fallback to reasoning
-        final_content = content or reasoning
-
-        if not final_content:
+        if not content and not reasoning:
             log(f"Empty LLM response ({model})", "ERROR")
-            return None
+            return None, None
 
         log(f"[LLM] Response: content={len(content)}c, reasoning={len(reasoning)}c")
-        return final_content
+        return content, reasoning
 
     except Exception as e:
         log(f"LLM error ({model}): {e}", "ERROR")
@@ -827,6 +824,90 @@ def extract_json_from_content(content):
     
     if len(normalized) >= 6:
         return normalized
+    return None
+
+def extract_json_from_reasoning(reasoning):
+    """Extract JSON from reasoning content (Strategy 1 + 2).
+    
+    Strategy 1: Find JSON with slide markers
+    Strategy 2: Find LAST valid JSON with real content
+    """
+    if not reasoning:
+        return None
+    
+    # Strategy 1: Find JSON with slide markers
+    for marker in ["slide_1", "slides"]:
+        idx = 0
+        while idx < len(reasoning):
+            start = reasoning.find('{', idx)
+            if start == -1:
+                break
+            depth = 0
+            end = -1
+            for i in range(start, len(reasoning)):
+                if reasoning[i] == '{': depth += 1
+                elif reasoning[i] == '}': depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+            if end == -1:
+                break
+            try:
+                obj = json.loads(reasoning[start:end+1])
+                if isinstance(obj, dict) and marker in obj:
+                    # Validate: check content length
+                    sample = ""
+                    for k in ["slide_1", "slide_2", "slides"]:
+                        if k in obj:
+                            v = obj[k]
+                            if isinstance(v, dict):
+                                sample = v.get("content", "") or v.get("hook", "")
+                            elif isinstance(v, str):
+                                sample = v
+                            elif isinstance(v, list) and len(v) > 0:
+                                sample = v[0] if isinstance(v[0], str) else str(v[0])
+                            break
+                    if len(sample) > 50:  # Real content, not placeholder
+                        log(f"   Strategy 1: Found JSON in reasoning ({len(reasoning[start:end+1])}c, key={marker})")
+                        return extract_json_from_content(reasoning[start:end+1])
+            except json.JSONDecodeError:
+                pass
+            idx = end + 1
+    
+    # Strategy 2: Find LAST valid JSON with real content (fallback)
+    log("   Strategy 2: scanning for last valid JSON with content...")
+    best_json = ""
+    best_score = 0
+    # Scan from end, find all valid JSONs with 8+ keys
+    for i in range(len(reasoning) - 1, max(len(reasoning) - 50000, -1), -1):
+        if reasoning[i] == '}':
+            for j in range(i, max(i - 15000, -1), -1):
+                if reasoning[j] == '{':
+                    try:
+                        obj = json.loads(reasoning[j:i+1])
+                        if isinstance(obj, dict) and len(obj) >= 8:
+                            # Score by total content length
+                            total_content = 0
+                            for k, v in obj.items():
+                                if isinstance(v, dict) and "content" in v:
+                                    total_content += len(v["content"])
+                                elif isinstance(v, str):
+                                    total_content += len(v)
+                            if total_content > best_score:
+                                best_score = total_content
+                                best_json = reasoning[j:i+1]
+                    except json.JSONDecodeError:
+                        pass
+            if best_json:
+                break
+    
+    if best_json and best_score > 500:
+        log(f"   Strategy 2: Found JSON ({len(best_json)}c, score={best_score})")
+        return extract_json_from_content(best_json)
+    elif best_json:
+        log(f"   Strategy 2: Found JSON but low score ({best_score}), trying anyway...")
+        return extract_json_from_content(best_json)
+    
     return None
 
 def generate_content(article, article_content):
@@ -913,15 +994,22 @@ ARTIKEL:
     for model in LLM_MODELS:
         for attempt in range(MAX_HOOK_RETRIES):
             log(f"[LLM] Trying model: {model} (attempt {attempt + 1})")
-            content = call_llm(system_prompt, user_prompt, model)
+            content, reasoning = call_llm(system_prompt, user_prompt, model)
 
-            if content:
-                save_json(RAW_OUTPUT_FILE, {"raw": content, "model": model, "timestamp": datetime.now().isoformat()})
+            if content or reasoning:
+                save_json(RAW_OUTPUT_FILE, {"content": content, "reasoning": reasoning[:2000], "model": model, "timestamp": datetime.now().isoformat()})
 
-                slides_data = extract_json_from_content(content)
+                # Try content first, then reasoning (Strategy 1 + 2)
+                slides_data = None
+                if content:
+                    slides_data = extract_json_from_content(content)
+                if not slides_data and reasoning:
+                    log(f"[LLM] Content empty, extracting from reasoning...")
+                    slides_data = extract_json_from_reasoning(reasoning)
+                
                 if slides_data:
                     # Validate hook
-                    hook = slides_data.get("slide_1", {}).get("hook", "")
+                    hook = slides_data.get("slide_1", {}).get("hook", "") or slides_data.get("slide_1", {}).get("content", "")
                     is_valid, issues = validate_hook(hook)
                     
                     if is_valid:
@@ -1033,13 +1121,16 @@ def validate_hook(hook):
     return is_valid, issues
 
 def count_sentences(text):
-    """Count sentences in text by splitting on sentence endings."""
+    """Count sentences in text by splitting on sentence endings.
+    
+    Skips short fragments (< 5 chars) like Pressbox does.
+    """
     if not text:
         return 0
     # Split by sentence endings followed by space or end
     sentences = re.split(r'(?<=[.!?])\s+', text)
-    # Filter out empty strings
-    sentences = [s for s in sentences if s.strip()]
+    # Filter out empty strings and short fragments
+    sentences = [s for s in sentences if s.strip() and len(s.strip()) > 5]
     return len(sentences)
 
 def validate_slide_sentences(slides_data):
@@ -1049,36 +1140,44 @@ def validate_slide_sentences(slides_data):
     Slides 2-7: 3-4 sentences
     Slide 8: 2-3 sentences
     
+    With +1 tolerance for natural variation (like Pressbox).
+    
     Returns: (is_valid, issues)
     """
     issues = []
     
-    # Slide 1: 2-3 sentences
+    # Slide 1: 2-3 sentences (+1 tolerance = max 4)
     slide1 = slides_data.get('slide_1', {})
     hook = slide1.get('hook', '') if isinstance(slide1, dict) else ''
     content = slide1.get('content', '') if isinstance(slide1, dict) else ''
     text = hook if hook else content
     sentences = count_sentences(text)
-    if not (2 <= sentences <= 3):
+    if sentences < 2:
+        issues.append(f"slide_1: {sentences} sentences (need 2-3)")
+    elif sentences > 4:  # +1 tolerance
         issues.append(f"slide_1: {sentences} sentences (need 2-3)")
     
-    # Slides 2-7: 3-4 sentences
+    # Slides 2-7: 3-4 sentences (+1 tolerance = max 5)
     for i in range(2, 8):
         slide = slides_data.get(f'slide_{i}', {})
         content = slide.get('content', '') if isinstance(slide, dict) else ''
         hook = slide.get('hook', '') if isinstance(slide, dict) else ''
         text = content if content else hook
         sentences = count_sentences(text)
-        if not (3 <= sentences <= 4):
+        if sentences < 3:
+            issues.append(f"slide_{i}: {sentences} sentences (need 3-4)")
+        elif sentences > 5:  # +1 tolerance
             issues.append(f"slide_{i}: {sentences} sentences (need 3-4)")
     
-    # Slide 8: 2-3 sentences
+    # Slide 8: 2-3 sentences (+1 tolerance = max 4)
     slide8 = slides_data.get('slide_8', {})
     content = slide8.get('content', '') if isinstance(slide8, dict) else ''
     hook = slide8.get('hook', '') if isinstance(slide8, dict) else ''
     text = content if content else hook
     sentences = count_sentences(text)
-    if not (2 <= sentences <= 3):
+    if sentences < 2:
+        issues.append(f"slide_8: {sentences} sentences (need 2-3)")
+    elif sentences > 4:  # +1 tolerance
         issues.append(f"slide_8: {sentences} sentences (need 2-3)")
     
     is_valid = len(issues) == 0
