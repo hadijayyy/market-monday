@@ -798,13 +798,13 @@ slide_1: HOOK (150-300 chars, ANGKA + KONTEKS + DRAMA)
 ❌ BAD:
 "Ada berita tentang judi olahraga yang harus kamu ketahui."
 
-slide_2: APA YANG TERJADI (150-450 chars)
-slide_3: KENAPA PENTING (150-450 chars)
-slide_4: SIAPA YANG TERDAMPAK (150-450 chars)
-slide_5: SUDUT PANDANG (150-450 chars)
-slide_6: DAMPAK LEBIH LUAS (150-450 chars)
-slide_7: YANG BELUM JELAS (150-450 chars)
-slide_8: OPINI + FAKTA + CTA (150-450 chars + URL)
+slide_2: APA YANG TERJADI (250-450 chars)
+slide_3: KENAPA PENTING (250-450 chars)
+slide_4: SIAPA YANG TERDAMPAK (250-450 chars)
+slide_5: SUDUT PANDANG (250-450 chars)
+slide_6: DAMPAK LEBIH LUAS (250-450 chars)
+slide_7: YANG BELUM JELAS (250-450 chars)
+slide_8: OPINI + FAKTA + CTA (250-450 chars + URL)
 - WAJIB ada pertanyaan untuk pembaca: "Menurut lo, gimana...?"
 - Contoh: "Menurut lo, gimana cara stop judi online?"
 
