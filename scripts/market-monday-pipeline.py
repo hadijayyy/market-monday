@@ -54,7 +54,7 @@ REPORT_FILE = DATA_DIR / "market_analytics_report.md"
 
 # LLM CONFIG
 LLM_API_URL = "https://opencode.ai/zen/go/v1/chat/completions"
-LLM_MODELS = ["deepseek-v4-flash", "mimo-v2.5"]
+LLM_MODELS = ["mimo-v2.5", "deepseek-v4-flash"]
 DRY_RUN = False
 FORCE_MODEL = None
 LLM_MAX_TOKENS = 6000
@@ -158,12 +158,70 @@ VIDEO_KEYWORDS = {
     "livestream", "live streaming", "replay"
 }
 
+PROMO_KEYWORDS = {
+    "promo", "diskon", "cashback", "gratis", "free", "hadiah", "reward",
+    "pameran", "expo", "fair", "festival", "event",
+    "kunjungi", "datang ke", "hadir di", "acara",
+    "berlangsung", "digelar", "diselenggarakan",
+    "tiket", "registrasi", "daftar sekarang", "booking",
+    "limited", "terbatas", "kuota", "slot",
+    "voucher", "kupon", "bonus",
+}
+
 VIRAL_FACTORS = {
     "outrage_money": ["price", "cost", "debt", "money", "tax", "billion", "trillion", "rp", "harga", "biaya", "utang", "pajak"],
     "human_story": ["worker", "family", "household", "consumer", "employee", "pekerja", "keluarga", "rumah tangga", "konsumen"],
     "controversy": ["ban", "scandal", "fraud", "corruption", "protest", "korupsi", "skandal", "penipuan"],
     "record_milestone": ["record", "history", "milestone", "first ever", "highest", "terbesar", "tertinggi", "pertama"],
     "geopolitical": ["war", "conflict", "sanction", "tariff", "ban", "perang", "konflik", "sanksi"]
+}
+
+# Controversy / Drama / Clickbait keywords — boost score
+CONTROVERSY_KEYWORDS = {
+    "PHK", "PHK massal", "pemutusan hubungan kerja", "dirumahkan",
+    "bangkrut", "gulung tikar", "kolaps", "default", "gagal bayar",
+    "skandal", "korupsi", "suap", "gratifikasi", "nepotisme",
+    "manipulasi", "kecurangan", "penipuan", "fraud",
+    "protes", "demo", "unjuk rasa", "buruh mogok",
+    "bocor", "bocoran", "kebocoran", "temuan",
+    "kontroversi", "polemik", "heboh", "ramai",
+    "viral", "terkenal", "famous",
+    "sengketa", "gugatan", " class action",
+    "merugikan", "kerugian", "rugi", "merugi",
+}
+
+DRAMA_KEYWORDS = {
+    "tiba-tiba", "mendadak", "dikagetkan", "mengejutkan", "terkejut",
+    "miris", "menyedihkan", "kasihan", "prihatin", "memprihatinkan",
+    "drama", "kisah", "cerita", "pengakuan", "gestur",
+    "gebrakan", "kejutan", "blunder", "skandal",
+    "berani", "bantah", "tanggapi", "buka suara", "angkat bicara",
+    "tuding", "tuduhan", "salahkan", "kritik", "cam",
+    "makin", "semakin", "terus", "banjir", "membanjiri",
+    "muncul", "terungkap", "terbongkar", "terkuak",
+    "larang", "hentikan", "cabut", "batalkan",
+    "dilarang", "ditangkap", "diamankan", "dibekukan",
+    "anjlok", "merosot", "jatuh", "ambruk", "runtuh",
+    "terpuruk", "terperosok", "gulung tikar", "bangkrut",
+    "phk", "dirumahkan", "hentikan operasi",
+    "gigit", "was-was", "cemas", "khawatir",
+}
+
+CLICKBAIT_KEYWORDS = {
+    "bikin iri", "bikin penasaran", "ternyata", "rahasia",
+    "mengungkap", "mengintip", "bongkar", "sorot",
+    "viral", "heboh", "dibahas", "ramai diperbincangkan",
+    "beredar", "beredar luas", "masif", "viral di media sosial",
+    "terkenal", "famous", "populer",
+    "tak terduga", "tak disangka", "di luar dugaan",
+    "mengejutkan", "mencengangkan", "luar biasa",
+    "parah", "mengerikan", "ngeri", "mencengangkan",
+    "sensasional", "kontroversial", "penuh drama",
+    "terungkap", "terbongkar", "terkuak",
+    "muncul", "mencuat", "meledak",
+    "langsung", "tiba-tiba", "mendadak", "dikagetkan",
+    "rahasia", "tersembunyi", "tertutup",
+    "paling", "ter", "sekali", "banget",
 }
 
 TOPIC_PATTERNS = {
@@ -523,6 +581,29 @@ def score_candidate(article, posted, feedback):
     for kw in VIDEO_KEYWORDS:
         if kw in title:
             score -= 100
+            break
+
+    for kw in PROMO_KEYWORDS:
+        if kw in combined:
+            score -= 50
+            break
+
+    # Controversy boost
+    for kw in CONTROVERSY_KEYWORDS:
+        if kw.lower() in combined:
+            score += 20
+            break
+
+    # Drama boost
+    for kw in DRAMA_KEYWORDS:
+        if kw.lower() in combined:
+            score += 15
+            break
+
+    # Clickbait boost
+    for kw in CLICKBAIT_KEYWORDS:
+        if kw.lower() in combined:
+            score += 10
             break
 
     viral_count = 0
@@ -962,29 +1043,31 @@ def add_smart_whitespace(content):
     return '\n\n'.join(restored)
 
 def validate_hook(hook):
-    """Validate that hook has all 3 required elements: ANGKA + KONTEKS + DRAMA."""
+    """Validate that hook has at least 2 of 3 elements: ANGKA + KONTEKS + DRAMA.
+    
+    ANGKA is optional — articles without numbers can still pass if KONTEKS + DRAMA are present.
+    """
     issues = []
     
     has_angka = bool(re.search(r'\d+', hook))
-    if not has_angka:
-        issues.append("GAK ADA ANGKA SPESIFIK")
     
     konteks_words = [
         'gaji', 'harga', 'sembako', 'BBM', 'rumah', 'IHSG', 'saham', 'investasi', 
         'properti', 'KPR', 'cicilan', 'pangan', 'beras', 'minyak', 'energi',
         'ekonomi', 'pasar', 'defisit', 'inflasi', 'suku bunga', 'BI rate',
         'ekspor', 'impor', 'neraca', 'komoditas', 'kripto', 'dollar', 'rupiah',
-        'buruh', 'pekerja', 'karyawan', 'phk', 'industri', 'pabrik', 'umkm', 'usaha'
+        'buruh', 'pekerja', 'karyawan', 'phk', 'industri', 'pabrik', 'umkm', 'usaha',
+        'petani', 'pertanian', 'cabai', 'tanaman', 'panen',
+        'asuransi', 'bank', 'pinjam', 'kredit', 'aset', 'dana', 'modal',
+        'reksadana', 'obligasi', 'deposito', 'tabungan', 'kas',
+        'pajak', 'regulasi', 'kebijakan', 'apbn', 'apbd',
     ]
     has_konteks = any(word.lower() in hook.lower() for word in konteks_words)
-    if not has_konteks:
-        issues.append("GAK ADA KONTEKS YANG JELAS")
     
     drama_words = [
         'naik', 'turun', 'anjlok', 'meledak', 'ambruk', 'jatuh', 'rally',
         'kosong', 'langka', 'mahal', 'murah', 'phk', 'bangkrut', 'gagal',
         'krisis', 'merugi', 'rugi', 'terpuruk', 'sengsara', 'kolaps', 'viral',
-        # Extra drama words for better pass rate
         'antre', 'antrean', 'berdesakan', 'desak', 'rebutan', 'berebut',
         'rela', 'rela', 'berjuang', 'perjuangan', 'struggle',
         'miris', 'menyedihkan', 'kasihan', 'kasihan', 'prihatin',
@@ -997,10 +1080,20 @@ def validate_hook(hook):
         'hilang', 'lenyap', 'tammat', 'berakhir',
         'miskin', 'kaya', 'semakin', 'makin',
         'gigit', 'was-was', 'cemas', 'khawatir',
+        'buka suara', 'angkat bicara', 'tanggapi', 'bantah',
     ]
     has_drama = any(word.lower() in hook.lower() for word in drama_words)
-    if not has_drama:
-        issues.append("GAK ADA DRAMA/EMOSI")
+    
+    # Count how many elements are present
+    elements_present = sum([has_angka, has_konteks, has_drama])
+    
+    if elements_present < 2:
+        if not has_angka:
+            issues.append("GAK ADA ANGKA SPESIFIK")
+        if not has_konteks:
+            issues.append("GAK ADA KONTEKS YANG JELAS")
+        if not has_drama:
+            issues.append("GAK ADA DRAMA/EMOSI")
     
     return len(issues) == 0, issues
 
