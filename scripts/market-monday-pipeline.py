@@ -169,57 +169,51 @@ PROMO_KEYWORDS = {
 }
 
 # SARA & Sensitive content — HEAVY PENALTY (skip entirely)
+# Principle: Block content that causes social unrest or offends people
+# NOT block: Legitimate economic/political news
 SENSITIVE_KEYWORDS = {
-    # SARA (Suku, Agama, Ras, Antargolongan)
-    "sara", "suku", "agama", "ras", "etnis", "umat", "jemaah",
-    "伊斯兰", "christian", "buddha", "hindu", "katolik", "protestan",
-    "moslem", "muslim", "islam", " Kristen", "Katolik", "Hindu", "Buddha",
-    "masjid", "gereja", "pura", "vihara",
-    "ulama", "ustadz", "pendeta", "romo", "bhikkhu",
-    "fatwa", "syariah", "halal", "haram",
-    "mualaf", "konversi", "murtad",
-    "umat islam", "umat kristen",
-    "pihak agama", "tokoh agama",
+    # SARA - TRULY sensitive (religious/ethnic tensions)
+    "umat islam", "umat kristen", "umat hindu", "umat buddha",
+    "jihad", "kafir", "murtad", "blasphemy", "murtadin",
+    "syiah", "sunni", "ahmadiyah",
+    "pendeta", "ustadz", "kyai", "romo",
+    "konversi agama", "mualaf",
+    "umat protestan", "umat katolik",
     
-    # Politik sensitif
-    "politik", "partai", "pemilu", "pilkada", "cawapres", "capres",
-    "dpr", "mpr", "dpr RI", "senin", "koalisi",
-    "oposisi", "pemerintahan", "kabinet",
-    "golkar", "pdip", "gerindra", "demokrat", "nasdem", "pks",
-    "jokowi", "prabowo", "anies", "ganjar",
+    # Violence & Terrorism
+    "teroris", "terorisme", "bom bunuh diri", "ledakan bom",
+    "kerusuhan massa", "kericuhan", "anarkisme", "anarkis",
+    "pembunuhan massal", "penembakan massal",
+    "kristal", "ekstremis", "radikalis",
+    "kriminalitas tinggi", "gangster", "preman",
     
-    # Konflik & kekerasan
-    "kerusuhan", "demo", "unjuk rasa", "blokade", "pendudukan",
-    "kekerasan", "pengeroyokan", "penganiayaan",
-    "bom", "ledakan", "teror", "teroris",
-    "penembakan", "pembunuhan", "penculikan",
-    
-    # Isu sosial sensitif
-    "perkosaan", "kekerasan seksual", "pelecehan",
-    "eksploitasi", "perdagangan orang", "trafficking",
-    "narkoba", "narkotika", "psikotropika", "sabu", "ganja", "kokain",
-    "judi", "perjudian", "togel", "slot online", "casino",
-    " prostitusi", "tuna susila",
-    
-    # Diskriminasi
-    "diskriminasi", "rasisme", "segregasi", "apartheid",
+    # Discrimination & Hate
+    "diskriminasi rasial", "rasisme", "segregasi",
     "homofobia", "transfobia", "seksisme",
+    "kebencian", "hate speech",
     
-    # Isu kesehatan sensitif
-    "epidemi", "pandemi", "wabah", "virus corona", "covid",
-    "monkeypox", "mpox",
+    # Extreme Social Issues
+    "eksploitasi anak", "perdagangan manusia", "trafficking",
+    "pornografi", "eksploitasi seksual",
+    "narkoba kelas atas", "kartel narkoba",
+    "judi online besar", "money laundering",
     
-    # Bencana besar
-    "gempa bumi", "tsunami", "gunung meletus", "banjir bandang",
-    "tanah longsor", "kebakaran hutan",
+    # Extreme Cases Only (not general mentions)
+    "korupsi miliaran", "suap miliaran", "gratifikasi miliaran",
+    "skandal seks", "pelecehan seksual",
     
-    # Korupsi besar
-    "korupsi", "korupsi besar", "suap", "gratifikasi", "nepotisme",
-    "mark up", "penggelapan", "pencucian uang",
+    # Extreme Disasters (only major ones)
+    "tsunami besar", "gunung meletus dahsyat", "gempa 8.0",
+    "banjir bandang", "longsor massal",
     
-    # Hukum berat
-    "hukuman mati", "penjara seumur hidup", "tersangka korupsi",
-    "tersangka pembunuhan", "tersangka terorisme",
+    # Extreme Political (not general politics)
+    "kudeta", "pemberontakan", "separatis",
+    "genosida", "ethnic cleansing",
+    "kamp pengungsi", "krisis kemanusiaan",
+    
+    # Extreme Economic (not general economic news)
+    "default hutang", "krisis keuangan besar",
+    "krash pasar", "bank run", "bankirupt massal",
 }
 
 VIRAL_FACTORS = {
