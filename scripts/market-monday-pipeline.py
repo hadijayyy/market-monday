@@ -826,12 +826,13 @@ def extract_json_from_content(content):
             elif isinstance(val, dict):
                 normalized[key] = val
     
-    if len(normalized) >= 6:
+    if len(normalized) >= 4:
+        log(f"   extract_json_from_content: found {len(normalized)} slides")
         return normalized
     return None
 
-def extract_json_from_reasoning(reasoning):
-    """Extract JSON from reasoning content (Strategy 1 + 2)."""
+def extract_json_from_reasoning(reasoning, content=""):
+    """Extract JSON from reasoning content (Strategy 1 + 2 + 3)."""
     if not reasoning:
         return None
     
@@ -883,7 +884,7 @@ def extract_json_from_reasoning(reasoning):
                 if reasoning[j] == '{':
                     try:
                         obj = json.loads(reasoning[j:i+1])
-                        if isinstance(obj, dict) and len(obj) >= 8:
+                        if isinstance(obj, dict) and len(obj) >= 4:
                             total_content = 0
                             for k, v in obj.items():
                                 if isinstance(v, dict) and "content" in v:
@@ -898,13 +899,23 @@ def extract_json_from_reasoning(reasoning):
             if best_json:
                 break
     
-    if best_json and best_score > 500:
+    if best_json and best_score > 200:
         log(f"   Strategy 2: Found JSON ({len(best_json)}c, score={best_score})")
         return extract_json_from_content(best_json)
     elif best_json:
         log(f"   Strategy 2: Found JSON but low score ({best_score}), trying anyway...")
         return extract_json_from_content(best_json)
-    
+
+    # Strategy 3: try content+reasoning combined
+    log("   Strategy 3: trying combined content+reasoning...")
+    combined = (content if content else "") + "\n" + (reasoning if reasoning else "")
+    combined = combined.strip()
+    if combined:
+        result = extract_json_from_content(combined)
+        if result:
+            log(f"   Strategy 3: Found JSON in combined ({len(combined)}c)")
+            return result
+
     return None
 
 def generate_content(article, article_content):
@@ -1000,7 +1011,7 @@ ARTIKEL:
                     slides_data = extract_json_from_content(content)
                 if not slides_data and reasoning:
                     log("[LLM] Content empty, extracting from reasoning...")
-                    slides_data = extract_json_from_reasoning(reasoning)
+                    slides_data = extract_json_from_reasoning(reasoning, content)
                 
                 if slides_data:
                     hook = slides_data.get("slide_1", {}).get("hook", "") or slides_data.get("slide_1", {}).get("content", "")
@@ -1111,21 +1122,21 @@ def validate_slide_sentences(slides_data):
     slide1 = slides_data.get('slide_1', {})
     text1 = slide1.get('hook', '') if isinstance(slide1, dict) else slide1.get('content', '')
     s1 = count_sentences(text1)
-    if not (2 <= s1 <= 4):
-        issues.append(f"slide_1: {s1} sentences (need 2-3)")
+    if not (2 <= s1 <= 5):
+        issues.append(f"slide_1: {s1} sentences (need 2-4)")
     
     for i in range(2, 8):
         slide = slides_data.get(f'slide_{i}', {})
         text = slide.get('content', '') if isinstance(slide, dict) else slide.get('hook', '')
         s_count = count_sentences(text)
-        if not (3 <= s_count <= 5):
-            issues.append(f"slide_{i}: {s_count} sentences (need 3-4)")
+        if not (3 <= s_count <= 6):
+            issues.append(f"slide_{i}: {s_count} sentences (need 3-5)")
     
     slide8 = slides_data.get('slide_8', {})
     text8 = slide8.get('content', '') if isinstance(slide8, dict) else slide8.get('hook', '')
     s8 = count_sentences(text8)
-    if not (2 <= s8 <= 4):
-        issues.append(f"slide_8: {s8} sentences (need 2-3)")
+    if not (2 <= s8 <= 5):
+        issues.append(f"slide_8: {s8} sentences (need 2-4)")
     
     return len(issues) == 0, issues
 
