@@ -930,11 +930,11 @@ Ubah artikel jadi 8 slide Threads. JSON output.
 1. Hook (2-3): Angka + konteks + urgensi. Stop scroll.
 2. Apa Terjadi (3-4): Fakta utama. Siapa, apa, kapan.
 3. Kenapa Penting (3-4): Konteks + angka artikel.
-4. Terdampak (3-4): Fokus orang kecil (petani, buruh, UMKM).
+4. Terdampak (3-4): Fokus orang kecil. "Ini artinya buat kantong lo: ..."
 5. Fakta Tersembunyi (3-4): Yang jarang disorot media.
 6. Analisis (3-4): Buka "Kalau tren ini berlanjut..." — flag analisis.
 7. Belum Jelas (3-4): Ketidakpastian dari artikel.
-8. Opini+CTA (2-3): Opini tajam + "Menurut lo, [pertanyaan]?" + URL.
+8. Hot Take+CTA (2-3): Opini kontroversial/tajam + "Menurut lo, [pertanyaan]?" + URL.
 
 # RULES
 - Slide 1-5,7: HANYA fakta artikel.
