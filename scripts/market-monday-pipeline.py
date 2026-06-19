@@ -169,67 +169,61 @@ PROMO_KEYWORDS = {
 }
 
 # Finance-Specific Sensitive Keywords (Threads/Meta Policy)
-# These topics can cause account restrictions, reduced reach, or content removal
+# Based on actual Threads community guidelines and Meta policies
+# These keywords are associated with content that violates financial regulations
 SENSITIVE_KEYWORDS = {
-    # Financial Scams and Fraud (HIGH RISK)
-    "scam", "penipuan", "tipuan", "kedok",
-    "investasi bodong", "investasi palsu",
-    "money game", "ponzi", "piramida",
-    "forex scam", "crypto scam",
-    "binary option", "trading scam",
-    "tipu daya", "membohongi", "menipu",
+    # 1. FINANCIAL SCAMS & FRAUD (HIGH RISK)
+    # These keywords are associated with content that can cause financial harm
+    "jaminan untung", "pasti untung", "tanpa risiko",
+    "kaya mendadak", "penghasilan pasif 100%", "gandakan uang",
+    "untung 100% per hari", "tidak akan rugi", "rahasia sukses",
+    "kesempatan eksklusif",
     
-    # Market Manipulation (HIGH RISK)
-    "insider trading", "dagang orang dalam",
+    "guaranteed returns", "risk-free investment", "get rich quick",
+    "passive income 100%", "double your money", "100% profit daily",
+    "no risk", "can't lose", "secret formula", "exclusive opportunity",
+    
+    # 2. UNREGULATED FINANCIAL SERVICES (MEDIUM RISK)
+    # These keywords violate financial regulations
+    "binary option", "sinyal forex", "pompa kripto",
+    "tips orang dalam", "tips saham dijamin", "leverage 100x",
+    "tanpa verifikasi", "perdagangan anonim", "investasi lepas pantai",
+    "return bebas pajak",
+    
+    "binary options", "forex signals", "crypto pump",
+    "insider tips", "stock tips guaranteed", "100x leverage",
+    "no verification needed", "anonymous trading", "offshore investment",
+    "tax-free returns",
+    
+    # 3. DEBT & LENDING SCAMS (MEDIUM RISK)
+    # These keywords are associated with predatory lending
+    "pinjaman instan", "tanpa cek kredit", "uang tunai darurat",
+    "pinjaman gaji", "penarikan tunai", "konsolidasi hutang scam",
+    "perbaikan kredit", "hindari kebangkrutan", "kebebasan keuangan cepat",
+    "bebas hutang cepat",
+    
+    "instant loan", "no credit check", "emergency cash",
+    "payday loan", "cash advance", "debt consolidation scam",
+    "credit repair", "bankruptcy avoidance", "financial freedom fast",
+    "debt-free quick",
+    
+    # 4. MARKET MANIPULATION (HIGH RISK)
+    # These keywords are associated with market manipulation schemes
     "pump and dump", "pompa dan buang",
     "market manipulation", "manipulasi pasar",
-    "wash trading", "perdagangan cuci",
-    "front running", "depan menjalankan",
+    "insider trading", "dagang orang dalam",
     
-    # Predatory Financial Services (MEDIUM RISK)
+    "pump and dump", "market manipulation", "insider trading",
+    "wash trading", "front running", "spoofing",
+    
+    # 5. PREDATORY FINANCIAL SERVICES (MEDIUM RISK)
+    # These keywords are associated with predatory lending
     "pinjaman ilegal", "rentenir", "lintah darat",
     "debt collector kasar", "penagih hutang kasar",
     "debt collector pukul", "debt collector ancam",
     "pinjaman online ilegal", "pinjol ilegal",
     "predatory lending", "pinjaman predatori",
     "skyrocketing interest", "bunga mencekik",
-    
-    # Financial Exploitation (MEDIUM RISK)
-    "eksploitasi keuangan", "memanfaatkan keuangan",
-    "targeting vulnerable", "menargetkan rentan",
-    "elder abuse finance", "eksploitasi lansia",
-    "scam lansia", "penipuan lansia",
-    
-    # Misleading Financial Claims (MEDIUM RISK)
-    "jaminan untung", "pasti untung",
-    "risk-free", "tanpa risiko",
-    "guaranteed returns", "return dijamin",
-    "get rich quick", "kaya mendadak",
-    "passive income 100%", "penghasilan pasif 100%",
-    
-    # Unregulated Financial Activities (MEDIUM RISK)
-    "judi online", "perjudian online",
-    "slot online", "casino online",
-    "togel online", "sabung ayam",
-    "betting", "taruhan",
-    
-    # Debt and Bankruptcy (LOW-MEDIUM RISK)
-    "bangkrut", "kebangkrutan",
-    "default", "gagal bayar",
-    "kredit macet", "pinjaman macet",
-    "debt restructuring", "restrukturisasi hutang",
-    
-    # Extreme Market Events (LOW RISK)
-    "panic selling", "penjualan panik",
-    "market crash", "krash pasar",
-    "black swan", "angsa hitam",
-    "financial crisis", "krisis keuangan",
-    
-    # Predatory Business Practices (MEDIUM RISK)
-    "price gouging", "penetapan harga berlebihan",
-    "unfair practices", "praktik tidak adis",
-    "hidden fees", "biaya tersembunyi",
-    "deceptive marketing", "pemasaran menipu",
 }
 
 VIRAL_FACTORS = {
