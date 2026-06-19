@@ -168,6 +168,60 @@ PROMO_KEYWORDS = {
     "voucher", "kupon", "bonus",
 }
 
+# SARA & Sensitive content — HEAVY PENALTY (skip entirely)
+SENSITIVE_KEYWORDS = {
+    # SARA (Suku, Agama, Ras, Antargolongan)
+    "sara", "suku", "agama", "ras", "etnis", "umat", "jemaah",
+    "伊斯兰", "christian", "buddha", "hindu", "katolik", "protestan",
+    "moslem", "muslim", "islam", " Kristen", "Katolik", "Hindu", "Buddha",
+    "masjid", "gereja", "pura", "vihara",
+    "ulama", "ustadz", "pendeta", "romo", "bhikkhu",
+    "fatwa", "syariah", "halal", "haram",
+    "mualaf", "konversi", "murtad",
+    "umat islam", "umat kristen",
+    "pihak agama", "tokoh agama",
+    
+    # Politik sensitif
+    "politik", "partai", "pemilu", "pilkada", "cawapres", "capres",
+    "dpr", "mpr", "dpr RI", "senin", "koalisi",
+    "oposisi", "pemerintahan", "kabinet",
+    "golkar", "pdip", "gerindra", "demokrat", "nasdem", "pks",
+    "jokowi", "prabowo", "anies", "ganjar",
+    
+    # Konflik & kekerasan
+    "kerusuhan", "demo", "unjuk rasa", "blokade", "pendudukan",
+    "kekerasan", "pengeroyokan", "penganiayaan",
+    "bom", "ledakan", "teror", "teroris",
+    "penembakan", "pembunuhan", "penculikan",
+    
+    # Isu sosial sensitif
+    "perkosaan", "kekerasan seksual", "pelecehan",
+    "eksploitasi", "perdagangan orang", "trafficking",
+    "narkoba", "narkotika", "psikotropika", "sabu", "ganja", "kokain",
+    "judi", "perjudian", "togel", "slot online", "casino",
+    " prostitusi", "tuna susila",
+    
+    # Diskriminasi
+    "diskriminasi", "rasisme", "segregasi", "apartheid",
+    "homofobia", "transfobia", "seksisme",
+    
+    # Isu kesehatan sensitif
+    "epidemi", "pandemi", "wabah", "virus corona", "covid",
+    "monkeypox", "mpox",
+    
+    # Bencana besar
+    "gempa bumi", "tsunami", "gunung meletus", "banjir bandang",
+    "tanah longsor", "kebakaran hutan",
+    
+    # Korupsi besar
+    "korupsi", "korupsi besar", "suap", "gratifikasi", "nepotisme",
+    "mark up", "penggelapan", "pencucian uang",
+    
+    # Hukum berat
+    "hukuman mati", "penjara seumur hidup", "tersangka korupsi",
+    "tersangka pembunuhan", "tersangka terorisme",
+}
+
 VIRAL_FACTORS = {
     "outrage_money": ["price", "cost", "debt", "money", "tax", "billion", "trillion", "rp", "harga", "biaya", "utang", "pajak"],
     "human_story": ["worker", "family", "household", "consumer", "employee", "pekerja", "keluarga", "rumah tangga", "konsumen"],
@@ -525,6 +579,12 @@ def score_candidate(article, posted, feedback):
     has_economic_keyword = any(kw in combined for kw in ECONOMIC_KEYWORDS)
     if not has_economic_keyword:
         return -200
+
+    # SARA & Sensitive content — HEAVY PENALTY (skip entirely)
+    has_sensitive = any(kw.lower() in combined for kw in SENSITIVE_KEYWORDS)
+    if has_sensitive:
+        log(f"[SCORING] ❌ SENSITIVE content detected: {article['title'][:60]}...", "WARN")
+        return -300
 
     score = 0
 
