@@ -168,52 +168,68 @@ PROMO_KEYWORDS = {
     "voucher", "kupon", "bonus",
 }
 
-# SARA & Sensitive content — HEAVY PENALTY (skip entirely)
-# Principle: Block content that causes social unrest or offends people
-# NOT block: Legitimate economic/political news
+# Finance-Specific Sensitive Keywords (Threads/Meta Policy)
+# These topics can cause account restrictions, reduced reach, or content removal
 SENSITIVE_KEYWORDS = {
-    # SARA - TRULY sensitive (religious/ethnic tensions)
-    "umat islam", "umat kristen", "umat hindu", "umat buddha",
-    "jihad", "kafir", "murtad", "blasphemy", "murtadin",
-    "syiah", "sunni", "ahmadiyah",
-    "pendeta", "ustadz", "kyai", "romo",
-    "konversi agama", "mualaf",
-    "umat protestan", "umat katolik",
+    # Financial Scams and Fraud (HIGH RISK)
+    "scam", "penipuan", "tipuan", "kedok",
+    "investasi bodong", "investasi palsu",
+    "money game", "ponzi", "piramida",
+    "forex scam", "crypto scam",
+    "binary option", "trading scam",
+    "tipu daya", "membohongi", "menipu",
     
-    # Violence & Terrorism
-    "teroris", "terorisme", "bom bunuh diri", "ledakan bom",
-    "kerusuhan massa", "kericuhan", "anarkisme", "anarkis",
-    "pembunuhan massal", "penembakan massal",
-    "kristal", "ekstremis", "radikalis",
-    "kriminalitas tinggi", "gangster", "preman",
+    # Market Manipulation (HIGH RISK)
+    "insider trading", "dagang orang dalam",
+    "pump and dump", "pompa dan buang",
+    "market manipulation", "manipulasi pasar",
+    "wash trading", "perdagangan cuci",
+    "front running", "depan menjalankan",
     
-    # Discrimination & Hate
-    "diskriminasi rasial", "rasisme", "segregasi",
-    "homofobia", "transfobia", "seksisme",
-    "kebencian", "hate speech",
+    # Predatory Financial Services (MEDIUM RISK)
+    "pinjaman ilegal", "rentenir", "lintah darat",
+    "debt collector kasar", "penagih hutang kasar",
+    "debt collector pukul", "debt collector ancam",
+    "pinjaman online ilegal", "pinjol ilegal",
+    "predatory lending", "pinjaman predatori",
+    "skyrocketing interest", "bunga mencekik",
     
-    # Extreme Social Issues
-    "eksploitasi anak", "perdagangan manusia", "trafficking",
-    "pornografi", "eksploitasi seksual",
-    "narkoba kelas atas", "kartel narkoba",
-    "judi online besar", "money laundering",
+    # Financial Exploitation (MEDIUM RISK)
+    "eksploitasi keuangan", "memanfaatkan keuangan",
+    "targeting vulnerable", "menargetkan rentan",
+    "elder abuse finance", "eksploitasi lansia",
+    "scam lansia", "penipuan lansia",
     
-    # Extreme Cases Only (not general mentions)
-    "korupsi miliaran", "suap miliaran", "gratifikasi miliaran",
-    "skandal seks", "pelecehan seksual",
+    # Misleading Financial Claims (MEDIUM RISK)
+    "jaminan untung", "pasti untung",
+    "risk-free", "tanpa risiko",
+    "guaranteed returns", "return dijamin",
+    "get rich quick", "kaya mendadak",
+    "passive income 100%", "penghasilan pasif 100%",
     
-    # Extreme Disasters (only major ones)
-    "tsunami besar", "gunung meletus dahsyat", "gempa 8.0",
-    "banjir bandang", "longsor massal",
+    # Unregulated Financial Activities (MEDIUM RISK)
+    "judi online", "perjudian online",
+    "slot online", "casino online",
+    "togel online", "sabung ayam",
+    "betting", "taruhan",
     
-    # Extreme Political (not general politics)
-    "kudeta", "pemberontakan", "separatis",
-    "genosida", "ethnic cleansing",
-    "kamp pengungsi", "krisis kemanusiaan",
+    # Debt and Bankruptcy (LOW-MEDIUM RISK)
+    "bangkrut", "kebangkrutan",
+    "default", "gagal bayar",
+    "kredit macet", "pinjaman macet",
+    "debt restructuring", "restrukturisasi hutang",
     
-    # Extreme Economic (not general economic news)
-    "default hutang", "krisis keuangan besar",
-    "krash pasar", "bank run", "bankirupt massal",
+    # Extreme Market Events (LOW RISK)
+    "panic selling", "penjualan panik",
+    "market crash", "krash pasar",
+    "black swan", "angsa hitam",
+    "financial crisis", "krisis keuangan",
+    
+    # Predatory Business Practices (MEDIUM RISK)
+    "price gouging", "penetapan harga berlebihan",
+    "unfair practices", "praktik tidak adis",
+    "hidden fees", "biaya tersembunyi",
+    "deceptive marketing", "pemasaran menipu",
 }
 
 VIRAL_FACTORS = {
