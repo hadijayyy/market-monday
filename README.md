@@ -6,82 +6,61 @@ Personal branding automation for Threads — economics & market insights for Ind
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  ⏰ SETIAP JAM :15                                         │
-│  market-monday-pipeline.py                                 │
-│  ├─ Scrape RSS (Detik, IDX, CNBC) → 30+ artikel           │
-│  ├─ Score (controversy + topic boosts + feedback)          │
-│  ├─ Extract article (curl + newspaper3k fallback)          │
-│  ├─ Dedup (Jaccard similarity 0.5 threshold)              │
-│  └─ LLM generate 8 slides → staging.json                   │
-│      ├─ Primary: mimo-v2.5 (fast, Indonesian)              │
-│      └─ Fallback: minimax-m3 (slower, reliable)            │
-├─────────────────────────────────────────────────────────────┤
-│  ⏰ SETIAP JAM :35                                         │
-│  economy-post.py                                           │
-│  ├─ Read staging.json                                      │
-│  ├─ Post ke Threads API                                    │
-│  ├─ Update posted_topics.json (dedup)                      │
-│  └─ Alert Telegram                                         │
-├─────────────────────────────────────────────────────────────┤
-│  ⏰ SETIAP MALAM 23:00                                     │
-│  market-monday-analytics.py                                │
-│  ├─ Fetch 20 post terakhir (Threads API)                   │
-│  ├─ Hitung engagement (likes, replies, reposts)            │
-│  ├─ Score per topic & time slot                            │
-│  ├─ Generate market_feedback.json                          │
-│  └─ Telegram report                                        │
+│  market-monday-pipeline.py (ALL-IN-ONE)                     │
 │                                                             │
-│  FEEDBACK LOOP:                                            │
-│  market_feedback.json → pipeline boost topic yang perform  │
-│  → Next post lebih baik → loop lagi                        │
+│  DEFAULT MODE:                                              │
+│  ├─ Scrape RSS (CNBC Indonesia, Detik Finance, IDX Channel) │
+│  ├─ Dedup (Jaccard similarity 0.35 threshold)              │
+│  ├─ Score (7-layer: impact + urgency + relevance + viral)  │
+│  ├─ Extract article (newspaper3k + native requests)         │
+│  ├─ LLM generate 8 slides (deepseek → mimo fallback)       │
+│  ├─ Validate (hook + sentence count + grounding)           │
+│  └─ Post to Threads (via pressbox-direct-post.py)          │
+│                                                             │
+│  --benchmark   Test RSS source quality                      │
+│  --analytics   Fetch engagement → update feedback JSON      │
+│  --dry-run     Generate without posting                     │
+│  --model X     Force specific model                        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Features
 
-- **RSS Scraping** — Detik Finance, IDX Channel, CNBC Indonesia
-- **Smart Scoring** — Controversy + News + Topic boosts + Analytics feedback
-- **Analytics Feedback Loop** — Topic boosts from engagement data
-- **LLM Generation** — 8-slide threads with hook, story arc, and URL
-- **Dedup** — Jaccard similarity (0.5) + URL tracking prevents reposts
-- **Quality > Quantity** — Min 60min gap between posts
-- **Streaming** — SSE for faster LLM response
-- **Reasoning Bypass** — Optimized prompts for speed
+- **All-in-One** — 1 script menggantikan 3 file lama (pipeline + post + analytics)
+- **RSS Scraping** — CNBC Indonesia, Detik Finance, IDX Channel (native requests, no curl)
+- **7-Layer Scoring** — Impact + Urgency + Indo Relevance + Viral + Topic boost + Time boost
+- **Analytics Feedback Loop** — Topic & time slot boosts dari engagement data
+- **LLM Generation** — 8-slide threads dengan hook, story arc, dan URL
+- **Dedup** — Jaccard similarity (0.35) + URL tracking prevents reposts
+- **3 Validations** — Hook (ANGKA + KONTEKS + DRAMA) + Sentence count + Grounding check
+- **Model Fallback** — deepseek-v4-flash → mimo-v2.5
+- **Streaming** — SSE untuk faster LLM response
 
-## Models
+## CLI Usage
 
-| Model | Role | Speed | Indonesian |
-|-------|------|-------|------------|
-| **mimo-v2.5** | Primary | ~40s | ✅ Excellent |
-| **minimax-m3** | Fallback | ~60s | ✅ Good |
+```bash
+# Normal run — scrape, generate, post to Threads
+python3 market-monday-pipeline.py
 
-> deepseek-v4-flash fails with Indonesian prompts (returns 0 content).
+# Dry run — generate tanpa posting
+python3 market-monday-pipeline.py --dry-run
 
-## Hook Validation
+# Benchmark RSS sources
+python3 market-monday-pipeline.py --benchmark
 
-Every hook must contain 3 elements:
+# Run analytics — update market_feedback.json
+python3 market-monday-pipeline.py --analytics
 
-| Element | Description | Example |
-|---------|-------------|---------|
-| **ANGKA** | Numbers, percentages, currency | Rp 301 T, 5%, 2025 |
-| **KONTEKST** | Finance-related words | bank, harga, saham, utang |
-| **DRAMA** | Emotional/dramatic words | naik, turun, tapi, mahal |
-
-## Files
-
-| File | Description |
-|------|-------------|
-| `scripts/market-monday-pipeline.py` | Main pipeline (scrape + score + generate) |
-| `scripts/market-monday-analytics.py` | Analytics feedback loop |
-| `scripts/economy-post.py` | Post to Threads via API |
-| `scripts/economy-pipeline.py` | Legacy pipeline (deprecated) |
+# Force specific model
+python3 market-monday-pipeline.py --model mimo-v2.5
+```
 
 ## Setup
 
 ### 1. Prerequisites
 
 ```bash
-pip install newspaper3k lxml_html_clean requests httpx
+pip install requests newspaper3k lxml_html_clean httpx
 ```
 
 ### 2. Environment Variables
@@ -100,45 +79,130 @@ Create `~/.hermes/threads_token.json`:
 
 ```json
 {
-  "user_id": your_user_id,
+  "user_id": 123456789,
   "access_token": "your_access_token"
 }
 ```
 
-### 4. Cron Jobs
+### 4. Cron Job (Optional)
 
 ```bash
-# Pipeline (generate content) — every hour at :15
+# Run every hour at :15
 15 * * * * python3 ~/.hermes/scripts/market-monday-pipeline.py
 
-# Post (publish content) — every hour at :35
-35 * * * * python3 ~/.hermes/scripts/economy-post.py
-
-# Analytics (feedback loop) — every night at 23:00
-0 23 * * * python3 ~/.hermes/scripts/market-monday-analytics.py
+# Analytics every night at 23:00
+0 23 * * * python3 ~/.hermes/scripts/market-monday-pipeline.py --analytics
 ```
 
-## Manual Run
+## Models
 
-```bash
-# Dry run (no posting)
-python3 ~/.hermes/scripts/market-monday-pipeline.py --dry-run
+| Model | Role | Speed |
+|-------|------|-------|
+| **deepseek-v4-flash** | Primary | ~40-50s |
+| **mimo-v2.5** | Fallback | ~25-50s |
 
-# Generate content
-python3 ~/.hermes/scripts/market-monday-pipeline.py
+## Validation System
 
-# Post to Threads
-python3 ~/.hermes/scripts/economy-post.py
+### 1. Hook Validation (3 elements required)
 
-# Run analytics feedback
-python3 ~/.hermes/scripts/market-monday-analytics.py
+| Element | Description | Example |
+|---------|-------------|---------|
+| **ANGKA** | Numbers, percentages, currency | Rp 15 juta, 5%, 1.000 orang |
+| **KONTEKS** | Finance-related words | bank, harga, saham, pekerja |
+| **DRAMA** | Emotional/dramatic words | antre, anjlok, bangkrut, viral |
+
+### 2. Sentence Count (+1 tolerance)
+
+| Slide | Required |
+|-------|----------|
+| Slide 1 (hook) | 2–3 sentences |
+| Slides 2–7 | 3–4 sentences |
+| Slide 8 (CTA) | 2–3 sentences |
+
+### 3. Grounding Check (Lenient)
+
+- Validates numbers in slides exist in article
+- Excludes: years (2020–2030), single digits, long IDs, currency amounts
+
+## Content Format
+
+Each thread has 8 slides:
+
+1. **Hook** — Angka + konteks + drama (2–3 kalimat)
+2. **Apa yang Terjadi** — Fakta utama (3–4 kalimat)
+3. **Kenapa Penting** — Konteks & angka (3–4 kalimat)
+4. **Siapa Terdampak** — Fokus orang kecil (3–4 kalimat)
+5. **Fakta Tersembunyi** — Yang jarang disorot media (3–4 kalimat)
+6. **Analisis Dampak** — Inferensi logis, di-flag sebagai analisis (3–4 kalimat)
+7. **Yang Belum Jelas** — Ketidakpastian dari artikel (3–4 kalimat)
+8. **Opini + CTA** — Pendapat + "Menurut lo, ...?" + URL (2–3 kalimat)
+
+### Hook Example
+
+✅ **Good:** "Lebih dari 1.000 orang rela antre 2 km di bawah terik matahari demi gaji Rp 15 juta."
+- ANGKA: 1.000 orang, 2 km, Rp 15 juta
+- KONTEKS: gaji
+- DRAMA: rela antre
+
+❌ **Bad:** "Banyak orang melamar kerja di pabrik baru."
+- No numbers
+- No specific context
+- No drama/emotion
+
+## Scoring System (7 Layers)
+
+| Layer | Factor | Score |
+|-------|--------|-------|
+| 1 | Impact CRASH (anjlok, bangkrut, krisis) | +30 |
+| 1 | Impact SURGE (rekor, rally, tembus) | +25 |
+| 1 | Impact NEGATIVE (turun, peringatan) | +20 |
+| 2 | Urgency HIGH (breaking, terbaru) | +25 |
+| 2 | Urgency MEDIUM (hari ini, mengumumkan) | +15 |
+| 3 | Indo HIGH (rupiah, ihsg, bank indonesia) | +40 |
+| 3 | Indo MEDIUM (batu bara, nikel, emas) | +25 |
+| 3 | Indo LOW (asia, asean, china) | +15 |
+| 4 | Boring keywords penalty | -15 |
+| 4 | Opinion keywords penalty | -20 |
+| 4 | Video keywords penalty | -100 |
+| 5 | Viral factors (3+ categories) | +50 |
+| 6 | Title quality (≤8 words) | +15 |
+| 6 | Title has numbers | +10 |
+| 7 | Analytics topic boost | up to +50 |
+| 7 | Analytics time boost | up to +30 |
+
+## Analytics Feedback Loop
+
+```
+Post to Threads
+     ↓
+--analytics (every night)
+     ↓
+Fetch 20 posts → calculate engagement
+     ↓
+Score by topic & time slot
+     ↓
+market_feedback.json
+     ↓
+Pipeline reads → boost topics that perform well
+     ↓
+Better posts → loop again
 ```
 
-## CLI Flags
+### Topic Tracking
 
-| Flag | Description |
-|------|-------------|
-| `--dry-run` | Generate content without posting to Threads |
+| Topic | Keywords |
+|-------|----------|
+| inflasi | inflasi, harga, cpi, deflasi |
+| suku_bunga | suku bunga, bi rate, rate hike |
+| global_market | wall street, saham, ihsg, rally |
+| currency | rupiah, dollar, forex, nilai tukar |
+| komoditas | minyak, emas, batu bara, coal |
+| property | properti, rumah, kpr, real estate |
+| tech_biz | ai, tech, startup, fintech |
+| kebijakan | pajak, regulasi, ojk, policy |
+| karir | karir, gaji, phk, layoff |
+| energi | energi, listrik, bbm, subsidi |
+| global_event | perang, war, sanction, imf |
 
 ## Data Files
 
@@ -149,128 +213,17 @@ python3 ~/.hermes/scripts/market-monday-analytics.py
 | `~/.hermes/market_monday/market_feedback.json` | Analytics feedback (topic boosts) |
 | `~/.hermes/market_monday/latest.md` | Latest generated content (readable) |
 | `~/.hermes/market_monday/raw_llm_output.txt` | Raw LLM output for debugging |
-
-## Analytics Feedback Loop
-
-### How It Works
-
-1. **Every night at 23:00** — `market-monday-analytics.py` fetches your last 20 posts
-2. **Calculates engagement** — likes, replies, reposts, views, quotes
-3. **Scores by topic** — inflasi, suku_bunga, global_market, etc.
-4. **Scores by time** — pagi, siang, sore, malam
-5. **Saves feedback** — `market_feedback.json` with boost percentages
-6. **Pipeline reads feedback** — boosts topics/times that perform well
-
-### Topic Tracking
-
-| Topic | Keywords |
-|-------|----------|
-| inflasi | inflasi, harga, cpi, harga naik |
-| suku_bunga | suku bunga, bi rate, interest rate |
-| global_market | wall street, saham, ihsg, index |
-| currency | rupiah, dollar, forex, kurs |
-| komoditas | minyak, emas, gold, oil, gas |
-| property | properti, rumah, kpr, cicilan |
-| tech_biz | ai, tech, startup, fintech, digital |
-| kebijakan | pajak, regulasi, subsidy, kebijakan |
-| karir | karir, gaji, phk, layoffs, upah |
-| energi | energi, listrik, bbm, pertamax |
-| utang | utang, pinjam, kredit, bank, hutang |
-
-### Boost Example
-
-```json
-{
-  "topic_boosts": {
-    "suku_bunga": {"avg_score": 85, "boost_pct": +42},
-    "global_market": {"avg_score": 72, "boost_pct": +21},
-    "property": {"avg_score": 45, "boost_pct": -15}
-  }
-}
-```
-
-Pipeline will prefer suku_bunga and global_market topics, avoid property.
-
-## Content Format
-
-Each thread has 8 slides:
-
-1. **Hook** — OUTRAGE/SHOCK with numbers + context + drama (max 300 chars)
-2. **Apa yang Terjadi** — What happened? (150-450 chars)
-3. **Kenapa Penting** — Why it matters (150-450 chars)
-4. **Siapa Terdampak** — Who's affected, empathy to small people (150-450 chars)
-5. **Sudut Pandang** — Different perspective (150-450 chars)
-6. **Dampak Lebih Luas** — Wider implications (150-450 chars)
-7. **Yang Belum Jelas** — What's unclear (150-450 chars)
-8. **Opini + Fakta** — Your opinion + facts from article + URL (150-450 chars)
-
-### Hook Examples
-
-✅ **Good:** "Menteri Keuangan Purbaya amankan Rp 301 T dari Bank Asia untuk proyek 2025-2029."
-- ANGKA: Rp 301 T
-- KONTEKST: Bank
-- DRAMA: amankan
-
-❌ **Bad:** "Pemerintah dapat pinjaman untuk pembangunan."
-- No numbers
-- No specific context
-- No drama/emotion
-
-## Scoring System
-
-| Factor | Weight | Description |
-|--------|--------|-------------|
-| Controversy | +30 | Crisis, crash, scandal keywords |
-| Viral Money | +25 | Price, cost, tax outrage |
-| Viral Human | +20 | Worker, family, affected people |
-| Freshness | +15 | Published < 2 hours ago |
-| Topic Boost | +10 | From analytics feedback |
-| Source Boost | +5 | Premium sources (CNBC, Detik) |
-
-## Customization
-
-### Add RSS Sources
-
-Edit `RSS_SOURCES` in `market-monday-pipeline.py`:
-
-```python
-RSS_SOURCES = [
-    {"name": "Reuters", "url": "https://rsshub.app/reuters/business", "type": "rss"},
-]
-```
-
-### Adjust Scoring
-
-Edit keywords in `market-monday-pipeline.py`:
-
-```python
-CONTROVERSY_KEYWORDS = ["crisis", "crash", "recession", ...]
-VIRAL_FACTORS = {
-    "outrage_money": ["price", "cost", "tax", ...],
-    "human_story": ["worker", "family", ...],
-}
-```
-
-### Add Topic Patterns
-
-Edit `TOPIC_PATTERNS` in both pipeline and analytics:
-
-```python
-TOPIC_PATTERNS = {
-    "crypto": ["bitcoin", "ethereum", "crypto", "blockchain"],
-    "properti": ["properti", "property", "rumah", "kpr"],
-}
-```
+| `~/.hermes/market_monday/benchmark_results.json` | RSS benchmark results |
+| `~/.hermes/market_monday/market_analytics_report.md` | Analytics report |
 
 ## Performance
 
-| Metric | Before | After |
-|--------|--------|-------|
-| LLM Time | 46s | 40s |
-| Total Time | 50s | 45s |
-| Hook Validation | 3 attempts | 1-2 attempts |
-| Streaming | ❌ | ✅ |
-| Reasoning Tokens | 12K | 8K |
+| Metric | Value |
+|--------|-------|
+| Scraping | <1s (parallel) |
+| Content extraction | <1s |
+| LLM generation | 40–90s per attempt |
+| Total (success) | ~1–2 min |
 
 ## Based On
 
