@@ -1072,6 +1072,11 @@ def validate_hook(hook):
         'asuransi', 'bank', 'pinjam', 'kredit', 'aset', 'dana', 'modal',
         'reksadana', 'obligasi', 'deposito', 'tabungan', 'kas',
         'pajak', 'regulasi', 'kebijakan', 'apbn', 'apbd',
+        'IKN', 'ibu kota', 'nusantara', 'infrastruktur', 'pembangunan', 'proyek',
+        'gedung', 'kota', 'pusat kota', 'cerdas', 'smart city', 'teknologi',
+        'operasional', 'beroperasi', 'siap', 'dibangun', 'konstruksi',
+        'utang', 'surat utang', 'obligasi', 'bond', 'investasi asing',
+        'RRC', 'China', 'asing', 'global', 'dunia', 'negara',
     ]
     has_konteks = any(word.lower() in hook.lower() for word in konteks_words)
     
