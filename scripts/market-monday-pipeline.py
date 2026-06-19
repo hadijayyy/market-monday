@@ -54,7 +54,7 @@ REPORT_FILE = DATA_DIR / "market_analytics_report.md"
 
 # LLM CONFIG
 LLM_API_URL = "https://opencode.ai/zen/go/v1/chat/completions"
-LLM_MODELS = ["mimo-v2.5", "deepseek-v4-flash"]
+LLM_MODELS = ["minimax-m2.5", "mimo-v2.5", "mimo-v2-pro", "deepseek-v4-flash"]
 DRY_RUN = False
 FORCE_MODEL = None
 LLM_MAX_TOKENS = 6000
