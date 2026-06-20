@@ -988,7 +988,7 @@ def generate_content(article, article_content):
 Content writer ekonomi pasar Indonesia. Nada: langsung, jujur, empati ke orang kecil.
 
 # TASK
-Ubah artikel jadi 8 slide Threads. JSON output.
+Ubah artikel jadi 7 slide Threads. JSON output.
 
 # SLIDES
 1. Hook (2-3): Angka + konteks + urgensi. Stop scroll.
@@ -997,13 +997,12 @@ Ubah artikel jadi 8 slide Threads. JSON output.
 4. Terdampak (3-4): Fokus orang kecil. "Ini artinya buat kantong lo: ..."
 5. Fakta Tersembunyi (3-4): Yang jarang disorot media.
 6. Analisis (3-4): Buka "Kalau tren ini berlanjut..." — flag analisis.
-7. Belum Jelas (3-4): Ketidakpastian dari artikel.
-8. Hot Take+CTA (2-3): Opini kontroversial/tajam + "Menurut lo, [pertanyaan]?" + URL.
+7. Hot Take+CTA (2-3): Opini kontroversial/tajam + "Menurut lo, [pertanyaan]?" + URL.
 
 # RULES
-- Slide 1-5,7: HANYA fakta artikel.
+- Slide 1-5: HANYA fakta artikel.
 - Slide 6: inferensi logis, flag analisis.
-- Slide 8: opini + empati personal dibolehkan.
+- Slide 7: opini + empati personal dibolehkan.
 - Bahasa: Indonesia gaul kredibel. "Lo/gue" sparingly.
 - Line break: gunakan \n\n antar kalimat.
 - Dilarang: em dash (—), hashtag, frasa kosong.
@@ -1011,7 +1010,7 @@ Ubah artikel jadi 8 slide Threads. JSON output.
 
 # OUTPUT
 Kembalikan HANYA JSON valid:
-{"slide_1":"...","slide_2":"...","slide_3":"...","slide_4":"...","slide_5":"...","slide_6":"...","slide_7":"...","slide_8":"..."}
+{"slide_1":"...","slide_2":"...","slide_3":"...","slide_4":"...","slide_5":"...","slide_6":"...","slide_7":"..."}
 Tanpa teks sebelum/sesudah JSON."""
 
     user_prompt = f"""JUDUL: {article['title']}
@@ -1161,18 +1160,18 @@ def validate_slide_sentences(slides_data):
     if not (2 <= s1 <= 5):
         issues.append(f"slide_1: {s1} sentences (need 2-4)")
     
-    for i in range(2, 8):
+    for i in range(2, 7):
         slide = slides_data.get(f'slide_{i}', {})
         text = slide.get('content', '') if isinstance(slide, dict) else slide.get('hook', '')
         s_count = count_sentences(text)
         if not (3 <= s_count <= 6):
             issues.append(f"slide_{i}: {s_count} sentences (need 3-5)")
     
-    slide8 = slides_data.get('slide_8', {})
-    text8 = slide8.get('content', '') if isinstance(slide8, dict) else slide8.get('hook', '')
-    s8 = count_sentences(text8)
-    if not (2 <= s8 <= 5):
-        issues.append(f"slide_8: {s8} sentences (need 2-4)")
+    slide7 = slides_data.get('slide_7', {})
+    text7 = slide7.get('content', '') if isinstance(slide7, dict) else slide7.get('hook', '')
+    s7 = count_sentences(text7)
+    if not (2 <= s7 <= 5):
+        issues.append(f"slide_7: {s7} sentences (need 2-4)")
     
     return len(issues) == 0, issues
 
