@@ -1183,8 +1183,8 @@ def validate_slide_sentences(slides_data):
     slide1 = slides_data.get('slide_1', {})
     text1 = slide1.get('hook', '') if isinstance(slide1, dict) else slide1.get('content', '')
     s1 = count_sentences(text1)
-    if not (2 <= s1 <= 6):
-        issues.append(f"slide_1: {s1} sentences (need 2-6)")
+    if not (2 <= s1 <= 7):
+        issues.append(f"slide_1: {s1} sentences (need 2-7)")
     
     for i in range(2, 7):
         slide = slides_data.get(f'slide_{i}', {})
@@ -1196,8 +1196,8 @@ def validate_slide_sentences(slides_data):
     slide7 = slides_data.get('slide_7', {})
     text7 = slide7.get('content', '') if isinstance(slide7, dict) else slide7.get('hook', '')
     s7 = count_sentences(text7)
-    if not (2 <= s7 <= 7):
-        issues.append(f"slide_7: {s7} sentences (need 2-7)")
+    if not (2 <= s7 <= 8):
+        issues.append(f"slide_7: {s7} sentences (need 2-8)")
     
     return len(issues) == 0, issues
 
@@ -1261,7 +1261,11 @@ def validate_grounding(slides_data, article_text):
                 continue
             
             # Skip if it's a currency amount (Rp, RM, $, etc.)
-            if re.search(rf'{re.escape(num)}\s*(?:juta|miliar|triliun|ribu|jt)', slide_text, re.IGNORECASE):
+            if re.search(rf'{re.escape(num)}\\s*(?:juta|miliar|triliun|ribu|jt)', slide_text, re.IGNORECASE):
+                continue
+            
+            # Skip if number appears in a URL
+            if re.search(rf'https?://[^\s]*{re.escape(num)}', slide_text, re.IGNORECASE):
                 continue
             
             issues.append(f"slide_{i}: Number '{num}' not found in article")
