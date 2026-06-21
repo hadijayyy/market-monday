@@ -42,6 +42,7 @@ DATA_DIR = Path.home() / ".hermes" / "market_monday"
 SCRIPTS_DIR = Path.home() / ".hermes" / "scripts"
 ENV_FILE = Path.home() / ".hermes" / ".env"
 TOKEN_PATH = Path.home() / ".hermes" / "market_monday" / "threads_token.json"
+THREADS_SCRIPT = SCRIPTS_DIR.parent / "market-monday" / "scripts" / "market-monday-post.py"
 
 STAGING_FILE = DATA_DIR / "staging.json"
 POSTED_FILE = DATA_DIR / "posted_topics.json"
@@ -1556,11 +1557,6 @@ def post_to_threads(staging_data):
 
     try:
         cmd = ["python3", str(THREADS_SCRIPT), "--file", str(temp_file)]
-        # v17: parameterize token path so multi-account posting works
-        # market-monday uses @ryanhadiii, pressbox keeps @parkthebus.football (default)
-        if TOKEN_PATH.exists():
-            cmd.extend(["--token-file", str(TOKEN_PATH)])
-            log(f"[POST] 🔑 Using token: {TOKEN_PATH}")
         image_url = staging_data.get("image_url", "")
         if image_url:
             cmd.extend(["--image", image_url])
