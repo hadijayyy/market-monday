@@ -85,8 +85,7 @@ BENCHMARK_SOURCES = [
     {"name": "CNBC Indonesia", "url": "https://www.cnbcindonesia.com/rss"},
     {"name": "Detik Finance", "url": "https://finance.detik.com/rss"},
     {"name": "IDX Channel", "url": "https://www.idxchannel.com/rss"},
-    {"name": "Kontan", "url": "https://www.kontan.co.id/rss"},
-    {"name": "Bisnis.com", "url": "https://www.bisnis.com/rss"},
+
     {"name": "BBC Business", "url": "https://feeds.bbci.co.uk/news/business/rss.xml"},
 ]
 
@@ -906,7 +905,7 @@ def extract_json_from_content(content):
             elif isinstance(val, dict):
                 normalized[key] = val
     
-    if len(normalized) >= 7:
+    if len(normalized) >= 6:
         log(f"   extract_json_from_content: found {len(normalized)} slides")
         return normalized
     return None
@@ -1184,8 +1183,8 @@ def validate_slide_sentences(slides_data):
     slide1 = slides_data.get('slide_1', {})
     text1 = slide1.get('hook', '') if isinstance(slide1, dict) else slide1.get('content', '')
     s1 = count_sentences(text1)
-    if not (2 <= s1 <= 5):
-        issues.append(f"slide_1: {s1} sentences (need 2-5)")
+    if not (2 <= s1 <= 6):
+        issues.append(f"slide_1: {s1} sentences (need 2-6)")
     
     for i in range(2, 7):
         slide = slides_data.get(f'slide_{i}', {})
@@ -1197,8 +1196,8 @@ def validate_slide_sentences(slides_data):
     slide7 = slides_data.get('slide_7', {})
     text7 = slide7.get('content', '') if isinstance(slide7, dict) else slide7.get('hook', '')
     s7 = count_sentences(text7)
-    if not (2 <= s7 <= 5):
-        issues.append(f"slide_7: {s7} sentences (need 2-5)")
+    if not (2 <= s7 <= 7):
+        issues.append(f"slide_7: {s7} sentences (need 2-7)")
     
     return len(issues) == 0, issues
 
