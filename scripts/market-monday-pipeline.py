@@ -1187,8 +1187,8 @@ def validate_slide_sentences(slides_data):
     else:
         text1 = str(slide1)
     s1 = count_sentences(text1)
-    if not (2 <= s1 <= 7):
-        issues.append(f"slide_1: {s1} sentences (need 2-7)")
+    if not (2 <= s1 <= 4):
+        issues.append(f"slide_1: {s1} sentences (need 2-4)")
     
     for i in range(2, 7):
         slide = slides_data.get(f'slide_{i}', {})
@@ -1197,8 +1197,8 @@ def validate_slide_sentences(slides_data):
         else:
             text = str(slide)
         s_count = count_sentences(text)
-        if not (2 <= s_count <= 6):
-            issues.append(f"slide_{i}: {s_count} sentences (need 2-6)")
+        if not (2 <= s_count <= 5):
+            issues.append(f"slide_{i}: {s_count} sentences (need 2-5)")
     
     slide7 = slides_data.get('slide_7', {})
     if isinstance(slide7, dict):
@@ -1206,8 +1206,8 @@ def validate_slide_sentences(slides_data):
     else:
         text7 = str(slide7)
     s7 = count_sentences(text7)
-    if not (2 <= s7 <= 6):
-        issues.append(f"slide_7: {s7} sentences (need 2-6)")
+    if not (2 <= s7 <= 5):
+        issues.append(f"slide_7: {s7} sentences (need 2-5)")
     
     return len(issues) == 0, issues
 
