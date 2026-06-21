@@ -52,12 +52,19 @@ BENCHMARK_FILE = DATA_DIR / "benchmark_results.json"
 REPORT_FILE = DATA_DIR / "market_analytics_report.md"
 
 # LLM CONFIG
-LLM_API_URL = "https://opencode.ai/zen/go/v1/chat/completions"
-LLM_MODELS = ["minimax-m2.5", "mimo-v2.5", "deepseek-v4-flash"]
+# Model routes — each model maps to its own API URL + key env var
+# Primary: mistral-large-latest (Mistral direct, fast, 8.5/10 ID+EN)
+# Fallback: MiniMax-M3 (tokenrouter, free, slow ~2 min — bumped LLM_TIMEOUT to 180s)
+MODEL_ROUTES = {
+    "mistral-large-latest": ("https://api.mistral.ai/v1/chat/completions", "MISTRAL_API_KEY"),
+    "MiniMax-M3": ("https://api.tokenrouter.com/v1/chat/completions", "MINIMAX_API_KEY"),
+}
+# Primary → fallback chain (order matters — first success wins)
+LLM_MODELS = ["mistral-large-latest", "MiniMax-M3"]
 DRY_RUN = False
 FORCE_MODEL = None
-LLM_MAX_TOKENS = 6000
-LLM_TIMEOUT = 90
+LLM_MAX_TOKENS = 10000  # bumped 6000→10000 — M3 verbose responses (~24k chars) were truncating mid-thought
+LLM_TIMEOUT = 180  # bumped 90→180s to cover M3 fallback (~2 min/call per skill note)
 
 # SIMILARITY
 SIMILARITY_THRESHOLD = 0.35
@@ -781,12 +788,18 @@ def extract_article_content(url):
 # ─── LLM CALLS ───────────────────────────────────────────────────────────────
 
 def call_llm(system_prompt, user_prompt, model):
-    """Call LLM API with system + user prompt split."""
+    """Call LLM API with system + user prompt split. Routes per model via MODEL_ROUTES."""
     load_env()
-    api_key = os.environ.get("OPENCODE_GO_API_KEY", "")
 
+    # Resolve route for this model
+    if model not in MODEL_ROUTES:
+        log(f"No route configured for model '{model}'", "ERROR")
+        return None, None
+    api_url, key_env = MODEL_ROUTES[model]
+
+    api_key = os.environ.get(key_env, "")
     if not api_key:
-        log("No API key found", "ERROR")
+        log(f"Missing {key_env} env var for model {model}", "ERROR")
         return None, None
 
     headers = {
@@ -801,13 +814,16 @@ def call_llm(system_prompt, user_prompt, model):
             {"role": "user", "content": user_prompt},
         ],
         "max_tokens": LLM_MAX_TOKENS,
-        "temperature": 0.8,
-        "reasoning_effort": "low",
+        "temperature": 0.5,  # 0.8→0.5: less sampling randomness, fewer hallucinated numbers
+        "reasoning_effort": "low",  # global default — reduces reasoning tokens ~35% per skill
         "stream": True
     }
+    # Opt-out for models that don't support reasoning_effort (e.g. mistral direct)
+    if model not in ("MiniMax-M3", "mimo-v2.5", "minimax-m2.5", "minimax-m2.7", "deepseek-v4-flash"):
+        payload.pop("reasoning_effort", None)
 
     try:
-        r = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=LLM_TIMEOUT, stream=True)
+        r = requests.post(api_url, headers=headers, json=payload, timeout=LLM_TIMEOUT, stream=True)
         
         if r.status_code != 200:
             log(f"LLM API error ({model}): HTTP {r.status_code}", "ERROR")
@@ -854,44 +870,82 @@ def call_llm(system_prompt, user_prompt, model):
         return None, None
 
 def extract_json_from_content(content):
-    """Extract JSON from LLM content (handles multiple formats)."""
+    """Extract JSON from LLM content (handles multiple formats).
+
+    Reasoning models (M3, deepseek) often embed a draft JSON in their
+    `` block before producing the final answer. Greedy regex
+    would match a span containing BOTH objects and fail with 'Extra data'.
+    Fix: enumerate all balanced {...} blocks, take the LAST valid one
+    (final answer is always at the end of the response).
+    """
     content = re.sub(r'```json\s*', '', content)
     content = re.sub(r'```\s*$', '', content)
     content = re.sub(r'```\w*\s*', '', content)
     content = content.strip()
-    
-    json_match = re.search(r'\{[\s\S]*\}', content)
-    
-    if not json_match:
-        json_match = re.search(r'\{[^{}]*"slide_1"[\s\S]*\}', content)
-    
-    if not json_match:
-        start = content.find('{')
-        if start != -1:
-            depth = 0
-            for i in range(start, len(content)):
-                if content[i] == '{':
-                    depth += 1
-                elif content[i] == '}':
-                    depth -= 1
+
+    # Strategy 0: enumerate balanced {...} blocks, take LAST valid dict
+    candidates = []
+    search_start = 0
+    while True:
+        idx = content.find('{', search_start)
+        if idx == -1:
+            break
+        depth = 0
+        end = -1
+        for i in range(idx, len(content)):
+            if content[i] == '{':
+                depth += 1
+            elif content[i] == '}':
+                depth -= 1
                 if depth == 0:
-                    json_match = re.search(r'\{[\s\S]*\}', content[start:i+1])
+                    end = i
                     break
-    
-    if not json_match:
-        return None
-    
-    try:
-        data = json.loads(json_match.group())
-    except json.JSONDecodeError:
-        json_str = json_match.group()
-        json_str = re.sub(r',\s*}', '}', json_str)
-        json_str = re.sub(r',\s*]', ']', json_str)
+        if end == -1:
+            break
         try:
-            data = json.loads(json_str)
-        except Exception as e:
-            log(f"JSON repair failed: {e}", "WARN")
+            obj = json.loads(content[idx:end + 1])
+            if isinstance(obj, dict):
+                candidates.append(obj)
+        except json.JSONDecodeError:
+            pass
+        search_start = end + 1
+
+    if candidates:
+        data = candidates[-1]  # last valid = final answer, not thinking draft
+    else:
+        # Fallback: original 3-strategy (greedy regex → slide_1 marker → brace counter)
+        json_match = re.search(r'\{[\s\S]*\}', content)
+
+        if not json_match:
+            json_match = re.search(r'\{[^{}]*"slide_1"[\s\S]*\}', content)
+
+        if not json_match:
+            start = content.find('{')
+            if start != -1:
+                depth = 0
+                for i in range(start, len(content)):
+                    if content[i] == '{':
+                        depth += 1
+                    elif content[i] == '}':
+                        depth -= 1
+                        if depth == 0:
+                            json_match = re.search(r'\{[\s\S]*\}', content[start:i + 1])
+                            break
+
+        if not json_match:
             return None
+
+        try:
+            data = json.loads(json_match.group())
+        except json.JSONDecodeError:
+            json_str = json_match.group()
+            json_str = re.sub(r',\s*}', '}', json_str)
+            json_str = re.sub(r',\s*]', ']', json_str)
+            try:
+                data = json.loads(json_str)
+            except Exception as e:
+                log(f"JSON repair failed: {e}", "WARN")
+                return None
     
     normalized = {}
     for i in range(1, 8):
@@ -1026,7 +1080,11 @@ Ubah artikel jadi 7 slide Threads. JSON output.
 7. Hot Take+CTA (2-3): Opini kontroversial/tajam. Tutup dengan "Menurut lo, [pertanyaan]?". Sertakan URL.
 
 # RULES
-- Slide 1-5: HANYA fakta artikel.
+- Slide 1-5: HANYA fakta artikel. WAJIB, BUKAN soft guideline.
+  - JANGAN sebut angka, nama, tanggal, atau fakta yang TIDAK ADA di artikel.
+  - Contoh SALAH: Artikel bilang "kerugian bank" → lo tulis "Rp 5 miliar" ← HALUSINASI.
+  - Contoh BENAR: Artikel bilang "kerugian bank" → lo tulis "kerugian bank" atau "angka detail belum diumumkan".
+  - Kalau info kurang lengkap, tulis "belum diumumkan" — JANGAN mengarang angka.
 - Slide 6: inferensi logis, flag prediksi.
 - Slide 7: opini + empati personal dibolehkan.
 - Setiap slide HARUS connect ke slide sebelumnya. Ga boleh disjointed.
@@ -1040,9 +1098,14 @@ Kembalikan HANYA JSON valid:
 {"slide_1":"...","slide_2":"...","slide_3":"...","slide_4":"...","slide_5":"...","slide_6":"...","slide_7":"..."}
 Tanpa teks sebelum/sesudah JSON."""
 
+    fact_bank = extract_facts(article_content[:3000])
+
     user_prompt = f"""JUDUL: {article['title']}
 SUMBER: {article['source']}
 URL: {article['url']}
+
+FAKTA DARI ARTIKEL (JANGAN sebut angka/nama yang tidak ada di sini):
+{fact_bank if fact_bank else "(tidak ada angka/entitas yang bisa diekstrak — gunakan frasa umum artikel)"}
 
 ARTIKEL:
 {article_content[:3000]}"""
@@ -1075,19 +1138,36 @@ ARTIKEL:
                     is_valid, issues = validate_hook(hook)
                     
                     if is_valid:
-                        sentences_valid, sentence_issues = validate_slide_sentences(slides_data)
-                        
-                        if sentences_valid:
-                            grounding_valid, grounding_issues = validate_grounding(slides_data, article_content)
-                            
-                            if grounding_valid:
-                                log(f"[LLM] ✅ Success with {model} - Hook valid: {hook[:50]}...")
-                                return slides_data
-                            else:
-                                log(f"[LLM] ⚠️ Grounding issues: {', '.join(grounding_issues)}", "WARN")
-                                continue
+                        # Normalize sentence counts (trim to max instead of rejecting)
+                        slides_data, norm_changes = normalize_slide_sentences(slides_data)
+                        if norm_changes:
+                            log(f"[LLM] ✂️ Normalized: {'; '.join(norm_changes)}", "INFO")
+
+                        # Add \\n\\n between every sentence (mobile readability on Threads)
+                        ws_changes = 0
+                        for i in range(1, 8):
+                            slide = slides_data.get(f"slide_{i}", {})
+                            if isinstance(slide, dict):
+                                if slide.get("hook"):
+                                    new_h = add_smart_whitespace(slide["hook"])
+                                    if new_h != slide["hook"]:
+                                        slide["hook"] = new_h
+                                        ws_changes += 1
+                                if slide.get("content"):
+                                    new_c = add_smart_whitespace(slide["content"])
+                                    if new_c != slide["content"]:
+                                        slide["content"] = new_c
+                                        ws_changes += 1
+                        if ws_changes:
+                            log(f"[LLM] ␣ Whitespace applied to {ws_changes} slides", "INFO")
+
+                        grounding_valid, grounding_issues = validate_grounding(slides_data, article_content)
+
+                        if grounding_valid:
+                            log(f"[LLM] ✅ Success with {model} - Hook valid: {hook[:50]}...")
+                            return slides_data
                         else:
-                            log(f"[LLM] ⚠️ Sentence count: {', '.join(sentence_issues)}", "WARN")
+                            log(f"[LLM] ⚠️ Grounding issues: {', '.join(grounding_issues)}", "WARN")
                             continue
                     else:
                         log(f"[LLM] ⚠️ Hook invalid: {', '.join(issues)}", "WARN")
@@ -1099,15 +1179,82 @@ ARTIKEL:
     log("[LLM] ❌ All models failed (hook validation failed or parse error)", "ERROR")
     return None
 
+def extract_facts(content):
+    """Extract numbers, named entities, percentages, currency from article for FACT BANK.
+
+    Returns a compact string of facts the model is allowed to reference.
+    Single-call anti-hallucination guard: by giving the model a pre-extracted
+    fact list, it stops "concretizing" vague article phrases with made-up numbers.
+    """
+    if not content:
+        return ""
+
+    # Extract numbers (skip year-only and URL-like long sequences)
+    numbers = set()
+    for m in re.finditer(r'\d[\d.,]*\d|\d+', content):
+        n = m.group()
+        if n in {str(y) for y in range(2020, 2031)}:
+            continue
+        if len(n.replace('.', '').replace(',', '')) > 6:
+            continue
+        numbers.add(n)
+
+    # Extract named entities (capitalized multi-letter words)
+    skip_words = {'Yang', 'Untuk', 'Dari', 'Dengan', 'Atau', 'Ini', 'Itu', 'The', 'And', 'For'}
+    entities = set()
+    for m in re.finditer(r'\b[A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]{2,})*\b', content):
+        e = m.group().strip()
+        if len(e) >= 3 and e not in skip_words:
+            entities.add(e)
+
+    # Percentages and currency amounts as-is
+    pct = re.findall(r'\d+(?:[.,]\d+)?\s*%', content)
+    cur = re.findall(r'(?:Rp|US\$|USD|IDR|MYR|SGD)\s*[\d.,]+(?:\s*(?:juta|miliar|triliun|ribu|jt|m|b))?', content, re.IGNORECASE)
+
+    lines = []
+    if numbers:
+        lines.append(f"- Angka spesifik: {', '.join(sorted(numbers)[:30])}")
+    if entities:
+        lines.append(f"- Nama/entitas: {', '.join(sorted(entities)[:20])}")
+    if pct:
+        lines.append(f"- Persentase: {', '.join(set(pct))}")
+    if cur:
+        lines.append(f"- Mata uang: {', '.join(sorted(set(cur))[:15])}")
+
+    return "\n".join(lines)
+
+
 def add_smart_whitespace(content):
-    """Add line breaks after sentences, but NOT after abbreviations."""
-    abbreviations = ['No', 'Mr', 'Mrs', 'Dr', 'St', 'vs', 'etc', 'dll']
+    """Add \\n\\n between sentences, but NOT after abbreviations.
+
+    Smart whitespace: protects abbreviations (English + Indonesian) from
+    being treated as sentence endings. Indonesian content often has
+    "dll.", "dsb.", "Bpk." at end of clauses that should NOT break the
+    sentence into a new line.
+    """
+    if not content:
+        return content
+    abbreviations = [
+        # English
+        'No', 'Mr', 'Mrs', 'Dr', 'St', 'vs', 'etc',
+        'Jan', 'Feb', 'Mar', 'Apr', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+        'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun',
+        # Indonesian
+        'dll', 'dsb', 'dkk', 'yth',
+        'Bpk', 'Bp', 'Sdri', 'Ibu', 'Mba', 'Mas',
+        # Indonesian academic/professional titles
+        'Drs', 'Dra', 'dr', 'Drg', 'drh', 'Ir',
+        'S.H', 'M.H', 'S.E', 'M.M', 'M.Si', 'S.T', 'S.P', 'S.Kom', 'S.KM', 'S.Pt', 'S.Hut',
+    ]
     protected = content
     for abbr in abbreviations:
-        protected = protected.replace(f'{abbr}.', f'{abbr}[[DOT]]')
-    
+        # Protect "Abbr." pattern only (avoid matching "Abbr" mid-word)
+        protected = re.sub(rf'\b{re.escape(abbr)}\.', f'{abbr}[[DOT]]', protected)
+
+    # Split on .!? followed by whitespace and a letter (any case, per skill pitfall #32)
     sentences = re.split(r'(?<=[.!?])\s+(?=[A-Za-z])', protected)
-    restored = [sent.replace('[[DOT]]', '.') for sent in sentences]
+    restored = [sent.replace('[[DOT]]', '.').strip() for sent in sentences]
+    restored = [s for s in restored if s]
     return '\n\n'.join(restored)
 
 def validate_hook(hook):
@@ -1176,6 +1323,66 @@ def count_sentences(text):
         return 0
     sentences = re.split(r'(?<=[.!?])\s+', text)
     return len([s for s in sentences if s.strip() and len(s.strip()) > 5])
+
+def normalize_slide_sentences(slides_data, min_hook=2, max_hook=4, min_body=2, max_body=5):
+    """Normalize slide sentence counts to fit within bounds (no reject — auto-fix).
+
+    Per user spec (21 Jun 2026):
+      - Slide 1 (hook): 2-4 sentences
+      - Slides 2-7 (body): 2-5 sentences
+
+    Behavior:
+      - Over max → trim to first N sentences (keep first, drop rest)
+      - Under min → pass through, log warning (padding risks fabrication)
+    Returns: (normalized_slides_data, list_of_changes)
+    """
+    changes = []
+
+    def trim_text(text, max_n):
+        if not text:
+            return text
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        valid = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 5]
+        if len(valid) > max_n:
+            changes.append(f"{len(valid)}→{max_n} sent")
+            return ' '.join(valid[:max_n])
+        return text
+
+    # Slide 1 (hook): max 4
+    slide1 = slides_data.get('slide_1', {})
+    if isinstance(slide1, dict):
+        text1 = slide1.get('hook', '') or slide1.get('content', '')
+        if text1:
+            s1 = count_sentences(text1)
+            if s1 > max_hook:
+                trimmed = trim_text(text1, max_hook)
+                if 'hook' in slide1 and slide1['hook']:
+                    slide1['hook'] = trimmed
+                else:
+                    slide1['content'] = trimmed
+            elif s1 < min_hook:
+                changes.append(f"slide_1 under min ({s1}<{min_hook})")
+
+    # Slides 2-7 (body): max 5
+    for i in range(2, 8):
+        slide = slides_data.get(f'slide_{i}', {})
+        if not isinstance(slide, dict):
+            continue
+        text = slide.get('content', '') or slide.get('hook', '')
+        if not text:
+            continue
+        s = count_sentences(text)
+        if s > max_body:
+            trimmed = trim_text(text, max_body)
+            if 'content' in slide and slide['content']:
+                slide['content'] = trimmed
+            else:
+                slide['hook'] = trimmed
+        elif s < min_body:
+            changes.append(f"slide_{i} under min ({s}<{min_body})")
+
+    return slides_data, changes
+
 
 def validate_slide_sentences(slides_data):
     """Validate sentence counts per slide (+1 tolerance)."""
