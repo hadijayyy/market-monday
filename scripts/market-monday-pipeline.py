@@ -42,7 +42,9 @@ DATA_DIR = Path.home() / ".hermes" / "market_monday"
 SCRIPTS_DIR = Path.home() / ".hermes" / "scripts"
 ENV_FILE = Path.home() / ".hermes" / ".env"
 TOKEN_PATH = Path.home() / ".hermes" / "market_monday" / "threads_token.json"
-THREADS_SCRIPT = SCRIPTS_DIR.parent / "market-monday" / "scripts" / "market-monday-post.py"
+# market-monday-post.py lives next to this script (same scripts/ dir).
+# Use __file__-relative path so it works regardless of where the repo is cloned.
+THREADS_SCRIPT = Path(__file__).parent / "market-monday-post.py"
 
 STAGING_FILE = DATA_DIR / "staging.json"
 POSTED_FILE = DATA_DIR / "posted_topics.json"
@@ -194,7 +196,6 @@ def check_include_keywords(text):
     Short tokens (≤4 chars) use word-boundary regex to avoid substring false
     positives (e.g. 'ara' inside 'Barat', 'ipo' inside any word).
     """
-    import re as _re
     text_lower = text.lower()
     matched = set()
     categories = set()
@@ -203,8 +204,8 @@ def check_include_keywords(text):
             kw_lower = kw.lower()
             if len(kw_lower) <= 4:
                 # Short token — require word boundary
-                pattern = r"\b" + _re.escape(kw_lower) + r"\b"
-                if _re.search(pattern, text_lower):
+                pattern = r"\b" + re.escape(kw_lower) + r"\b"
+                if re.search(pattern, text_lower):
                     matched.add(kw)
                     categories.add(cat)
             else:
@@ -223,16 +224,27 @@ def check_exclude_keywords(text):
         for kw in keywords:
             if kw.lower() in text_lower:
                 return kw
-    # Ambiguous excludes — only flag if NO include keyword nearby (±100 chars)
+    # Ambiguous excludes — only flag if NO include keyword nearby (±100 chars).
+    # Short tokens (≤4 chars: "blok", "emas") use word-boundary to avoid false
+    # positives like "kemas"/"lemas" containing "emas" as a substring.
     include_kws_flat = [kw.lower() for kws in INCLUDE_KEYWORDS.values() for kw in kws]
     context_window = 100
     for kw in AMBIGUOUS_EXCLUDES:
-        if kw in text_lower:
+        if len(kw) <= 4:
+            # Word-boundary match for short tokens
+            pattern = r"\b" + re.escape(kw) + r"\b"
+            match = re.search(pattern, text_lower)
+            if not match:
+                continue
+            idx = match.start()
+        else:
             idx = text_lower.find(kw)
-            context = text_lower[max(0, idx-context_window):idx+len(kw)+context_window]
-            has_include_nearby = any(inc in context for inc in include_kws_flat)
-            if not has_include_nearby:
-                return f"{kw} (no finance context)"
+            if idx == -1:
+                continue
+        context = text_lower[max(0, idx-context_window):idx+len(kw)+context_window]
+        has_include_nearby = any(inc in context for inc in include_kws_flat)
+        if not has_include_nearby:
+            return f"{kw} (no finance context)"
     return None
 
 def has_specific_data(text):
@@ -352,13 +364,9 @@ def extract_topics_from_title(title):
     """DEPRECATED in v17 — kept as stub for analytics backward compat."""
     return ["general"]
 
-def apply_topic_boost(score, title, feedback):
-    """DEPRECATED in v17 — topic/time boosts removed from scoring formula."""
-    return score
-
-def apply_time_boost(score, feedback):
-    """DEPRECATED in v17 — topic/time boosts removed from scoring formula."""
-    return score
+# Removed: apply_topic_boost() and apply_time_boost() (v17).
+# They were no-op stubs (always returned score unchanged) and never called.
+# Topic/time boosts are no longer part of the scoring formula per v17 spec.
 
 # ─── IMAGE EXTRACTION ────────────────────────────────────────────────────────
 
@@ -581,6 +589,10 @@ def is_finance_niche(article, article_content):
     Cost: ~$0.0016 per call (mistral, max_tokens=5, ~800 input tokens).
     Latency: ~3-5s per call.
     """
+    # Load .env so MISTRAL_API_KEY is available when called from cron/headless context.
+    # Without this, the function silently defaults to True and bypasses the filter.
+    load_env()
+
     if not article_content or len(article_content) < 100:
         return False
 
@@ -1460,7 +1472,7 @@ def validate_grounding(slides_data, article_text):
     # Common numbers that appear in content
     COMMON_NUMBERS = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '100', '1000'}
     
-    for i in range(1, 8):
+    for i in range(1, 7):  # v16: 6 slides only (was 1-7 in v15, leftover bug)
         slide = slides_data.get(f"slide_{i}", {})
         hook = slide.get('hook', '') if isinstance(slide, dict) else ''
         content = slide.get('content', '') if isinstance(slide, dict) else ''
