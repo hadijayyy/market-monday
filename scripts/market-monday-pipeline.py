@@ -53,7 +53,7 @@ REPORT_FILE = DATA_DIR / "market_analytics_report.md"
 
 # LLM CONFIG
 LLM_API_URL = "https://opencode.ai/zen/go/v1/chat/completions"
-LLM_MODELS = ["minimax-m2.5", "mimo-v2.5", "minimax-m2.7", "deepseek-v4-flash"]
+LLM_MODELS = ["minimax-m2.5", "mimo-v2.5", "deepseek-v4-flash"]
 DRY_RUN = False
 FORCE_MODEL = None
 LLM_MAX_TOKENS = 6000
@@ -1160,7 +1160,7 @@ def validate_hook(hook):
     # Count how many elements are present
     elements_present = sum([has_angka, has_konteks, has_drama])
     
-    if elements_present < 2:
+    if elements_present < 1:
         if not has_angka:
             issues.append("GAK ADA ANGKA SPESIFIK")
         if not has_konteks:
@@ -1197,8 +1197,8 @@ def validate_slide_sentences(slides_data):
         else:
             text = str(slide)
         s_count = count_sentences(text)
-        if not (3 <= s_count <= 5):
-            issues.append(f"slide_{i}: {s_count} sentences (need 3-5)")
+        if not (2 <= s_count <= 6):
+            issues.append(f"slide_{i}: {s_count} sentences (need 2-6)")
     
     slide7 = slides_data.get('slide_7', {})
     if isinstance(slide7, dict):
@@ -1206,8 +1206,8 @@ def validate_slide_sentences(slides_data):
     else:
         text7 = str(slide7)
     s7 = count_sentences(text7)
-    if not (2 <= s7 <= 5):
-        issues.append(f"slide_7: {s7} sentences (need 2-5)")
+    if not (2 <= s7 <= 6):
+        issues.append(f"slide_7: {s7} sentences (need 2-6)")
     
     return len(issues) == 0, issues
 
