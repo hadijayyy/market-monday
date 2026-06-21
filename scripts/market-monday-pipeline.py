@@ -63,6 +63,8 @@ MODEL_ROUTES = {
 LLM_MODELS = ["mistral-large-latest", "MiniMax-M3"]
 DRY_RUN = False
 FORCE_MODEL = None
+# Threads account handle for CTA "Follow @{handle}". Edit if account changes.
+THREADS_HANDLE = "@parkthebus.football"
 LLM_MAX_TOKENS = 10000  # bumped 6000→10000 — M3 verbose responses (~24k chars) were truncating mid-thought
 LLM_TIMEOUT = 180  # bumped 90→180s to cover M3 fallback (~2 min/call per skill note)
 
@@ -571,6 +573,25 @@ def score_candidate(article, posted, feedback):
     if not is_fresh(article.get("published", ""), hours=24):
         return -500
 
+    # RETAIL/PROMO BLACKLIST (21 Jun 2026) — skip retail shopping articles
+    # "harga" + "Bank Mega" in retail context (e.g. Transmart) shouldn't pass economic gate
+    RETAIL_KEYWORDS = [
+        # Specific retailers
+        "transmart", "indomaret", "alfamart", "hypermart", "carrefour", "lotte",
+        "matahari", "ramayana", "giant", "hero supermarket", "hypermart",
+        # Retail sale events
+        "full day sale", "midnight sale", "banting harga", "cuci gudang",
+        "flash sale", "diskon besar", "mega sale", "year end sale",
+        # Consumer goods (non-financial)
+        "alat masak", "panci", "kompor", "setrika", "blender", "mixer",
+        "sepeda", "sepatu", "tas", "baju", "fashion", "skincare", "kosmetik",
+        # General retail
+        "belanja online", "e-commerce", "tokopedia", "shopee", "lazada", "bukalapak",
+    ]
+    has_retail = any(kw in combined for kw in RETAIL_KEYWORDS)
+    if has_retail:
+        return -200  # Skip retail entirely — not finance niche
+
     ECONOMIC_KEYWORDS = [
         "harga", "saham", "ihsg", "idx", "rupiah", "dollar", "bi rate", "suku bunga",
         "inflasi", "ekonomi", "pasar", "investasi", "komoditas", "cpo", "sawit",
@@ -717,8 +738,8 @@ def score_candidate(article, posted, feedback):
 
     return score
 
-def select_best_candidate(articles, posted, feedback, posted_titles=None):
-    """Select the best article with feedback boosts + title dedup."""
+def select_best_candidate(articles, posted, feedback, posted_titles=None, top_n=1):
+    """Select top N articles by score, with feedback boosts + title dedup."""
     scored = []
     skipped_similar = 0
 
@@ -735,12 +756,67 @@ def select_best_candidate(articles, posted, feedback, posted_titles=None):
         log(f"[DEDUP] Skipped {skipped_similar} similar titles")
 
     if not scored:
-        return None, None
+        return []
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    best_score, best_article = scored[0]
-    log(f"Best candidate: {best_article['title']} (score: {best_score:.1f})")
-    return best_article, best_score
+    top = scored[:top_n]
+    if top:
+        best_score, best_article = top[0]
+        log(f"Best candidate: {best_article['title']} (score: {best_score:.1f})")
+    return top
+
+
+def is_finance_niche(article, article_content):
+    """Quick LLM check: is this article in the finance niche? Uses FULL content.
+
+    Returns True if finance, False otherwise. Default True on error (don't lose article).
+    Cost: ~$0.0016 per call (mistral, max_tokens=5, ~800 input tokens).
+    Latency: ~3-5s per call.
+    """
+    if not article_content or len(article_content) < 100:
+        return False
+
+    classify_prompt = f"""JUDUL: {article['title']}
+SUMBER: {article['source']}
+
+ARTIKEL (3000 char pertama):
+{article_content[:3000]}
+
+Niche apa artikel ini?
+
+Pilih SATU:
+- KEUANGAN: ekonomi makro, pasar modal, saham, IHSG, bank (regulasi/merger/fraud), fintech, kripto, inflasi, BI rate, properti komersial, industri, emiten
+- NON-KEUANGAN: retail (promo/diskon/sale), gaya hidup, hiburan, K-pop/film, teknologi konsumen (smartphone/laptop), travel, kuliner, fashion
+
+Jawab: KEUANGAN atau NON-KEUANGAN. Hanya 1 kata."""
+
+    api_key = os.environ.get("MISTRAL_API_KEY")
+    if not api_key:
+        return True  # Default yes if can't check
+
+    try:
+        resp = requests.post(
+            "https://api.mistral.ai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": "mistral-large-latest",
+                "messages": [{"role": "user", "content": classify_prompt}],
+                "max_tokens": 5,
+                "temperature": 0,
+            },
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            log(f"[CLASSIFY] HTTP {resp.status_code}, defaulting to YES", "WARN")
+            return True
+
+        result = resp.json()["choices"][0]["message"]["content"].strip().upper()
+        is_finance = "KEUANGAN" in result and "NON" not in result
+        log(f"[CLASSIFY] {article['title'][:50]}... → {result} → {'KEUANGAN' if is_finance else 'NON'}")
+        return is_finance
+    except Exception as e:
+        log(f"[CLASSIFY] Error: {e}, defaulting to YES", "WARN")
+        return True
 
 # ─── CONTENT EXTRACTION ──────────────────────────────────────────────────────
 
@@ -868,6 +944,35 @@ def call_llm(system_prompt, user_prompt, model):
     except Exception as e:
         log(f"LLM error ({model}): {e}", "ERROR")
         return None, None
+
+def extract_plain_text_slides(content):
+    """Parse '1/ ... 2/ ... 6/ ...' plain text format (v13+ new format).
+
+    Returns: dict like {"slide_1": "...", "slide_2": "...", ..., "slide_6": "..."}
+    or None if format not detected / not all 6 slides found.
+    """
+    if not content:
+        return None
+
+    # Strip code fences (in case model wrapped in markdown)
+    content = re.sub(r'```\w*\s*', '', content)
+    content = re.sub(r'```', '', content)
+    content = content.strip()
+
+    # Look for "N/ ..." patterns at line start
+    # Each slide can span multiple lines until next "N/" prefix
+    pattern = re.compile(r'^(\d)/[/\s]+(.*?)(?=^\d/|\Z)', re.DOTALL | re.MULTILINE)
+    slides = {}
+    for match in pattern.finditer(content):
+        num = int(match.group(1))
+        text = match.group(2).strip()
+        slides[f"slide_{num}"] = text
+
+    # Need all 6 slides
+    if len(slides) == 6:
+        return slides
+    return None
+
 
 def extract_json_from_content(content):
     """Extract JSON from LLM content (handles multiple formats).
@@ -1054,49 +1159,39 @@ def extract_json_from_reasoning(reasoning, content=""):
 
 def generate_content(article, article_content):
     """Generate Threads content via LLM with model fallback."""
-    system_prompt = """# ROLE
-Content writer ekonomi pasar Indonesia. Nada: langsung, jujur, empati ke orang kecil.
+    handle = THREADS_HANDLE
+    system_prompt = f"""FORMAT (output sebagai plain text):
+1/ Teks slide pertama.
+2/ Teks slide kedua.
+3/ Teks slide ketiga.
+4/ Teks slide keempat.
+5/ Teks slide kelima.
+6/ Teks slide keenam (CTA).
 
-# TASK
-Ubah artikel jadi 7 slide Threads. JSON output.
+STRUKTUR (6 slide):
+1/ Hook: WAJIB ada ANGKA + EMOSI + FINANCE. Contoh: "73% orang Indonesia gak punya dana darurat, dan itu bahaya buat lo kalau besok kena PHK mendadak."
+2/ Konteks: hubungkan ke kehidupan pembaca (gaji, cicilan, gaya hidup).
+3/ Data: fakta dari artikel, bahasa casual. Bungkus angka di analogi uang, bukan laporan.
+4/ Empati: "gue paham", "lo gak sendirian". Validasi rasa malu soal duit, takut cek saldo, dll.
+5/ Twist + Refleksi: fakta baru + "ini gue banget". Bukan nasihat finansial.
+6/ CTA: pertanyaan memancing + "Follow {handle}".
 
-# SLIDES (WAJIB saling terhubung, setiap slide build on previous)
-1. Hook (2-3): STOP SCROLL. Gunakan salah satu teknik:
-   - Provokasi: "Lo masih [X]? Mulai [Y], cuma bisa [Z]."
-   - Kontradiksi: "[Fakta mengejutkan] — ternyata [alasan]"
-   - Urgensi: "Mulai [tanggal], lo wajib [X]."
-   JANGAN sekadar menyampaikan fakta. Bikin penasaran.
+ATURAN:
+- Gaya: casual, "lo/gue/kita". Seperti ngobrol sama temen soal duit.
+- Setiap slide PUNYA PINT BARU, jangan ulang.
+- Karakter/tema dari slide 1 hidup terus di slide 2-5.
+- Data dibungkus analogi rupiah / kebiasaan finansial, bukan bahasa bank.
+- Slide 4-5 = EMPATI: beri validasi > nasihat. Banyak orang malu ngomongin duit.
+- JANGAN pakai jargon finansial (likuiditas, alokasi aset, diversifikasi) kecuali artikel yang nyebut.
 
-2. Apa yang Berubah (3-4): Fakta utama. APA yang berubah, SIAPA yang umumkan, KAPAN berlaku. Singkat, to the point.
-
-3. Kenapa Ini Terjadi (3-4): Alasan di balik kebijakan. konteks sebelumnya + angka artikel. Jangan ulang slide 2.
-
-4. Siapa yang Terdampak (3-4): SPESIFIK. "Lo yang [aktivitas spesifik], wajib [aksi]."
-
-5. Fakta Mengejutkan (3-4): Angka/ data yang jarang disorot. "Jarang dibahas, tapi..."
-
-6. Prediksi (3-4): "Kalau tren ini berlanjut..." — apa yang bakal terjadi. Inferensi logis.
-
-7. Hot Take+CTA (2-3): Opini kontroversial/tajam. Tutup dengan "Menurut lo, [pertanyaan]?". Sertakan URL.
-
-# RULES
-- Slide 1-5: HANYA fakta artikel. WAJIB, BUKAN soft guideline.
-  - JANGAN sebut angka, nama, tanggal, atau fakta yang TIDAK ADA di artikel.
-  - Contoh SALAH: Artikel bilang "kerugian bank" → lo tulis "Rp 5 miliar" ← HALUSINASI.
-  - Contoh BENAR: Artikel bilang "kerugian bank" → lo tulis "kerugian bank" atau "angka detail belum diumumkan".
-  - Kalau info kurang lengkap, tulis "belum diumumkan" — JANGAN mengarang angka.
-- Slide 6: inferensi logis, flag prediksi.
-- Slide 7: opini + empati personal dibolehkan.
-- Setiap slide HARUS connect ke slide sebelumnya. Ga boleh disjointed.
-- Bahasa: Indonesia gaul kredibel. "Lo/gue" sparingly.
-- Line break: gunakan \n\n antar kalimat.
-- Dilarang: em dash (—), hashtag, frasa kosong, kalimat klise.
-- Jangan sebut "slide" di konten.
-
-# OUTPUT
-Kembalikan HANYA JSON valid:
-{"slide_1":"...","slide_2":"...","slide_3":"...","slide_4":"...","slide_5":"...","slide_6":"...","slide_7":"..."}
-Tanpa teks sebelum/sesudah JSON."""
+ANTI-HALUSINASI (WAJIB):
+- Slide 1-3: HANYA ambil fakta, data, angka, nama ahli/peneliti/institusi, dan kutipan dari ARTIKEL.
+- JANGAN tambahkan fakta/angka/penelitian/statistik yang TIDAK ADA di artikel.
+- Kalau artikel sebut "dr. X" / "ahli Y" / "Bank Z" → pakai nama itu. Kalau gak ada, JANGAN karang nama.
+- Kalau artikel gak punya data angka, JANGAN pakai angka spesifik di hook.
+- Slide 4-6 boleh pakai POV/opini/pengalaman pribadi ("gue pernah boncos...", "lo pasti ngerasa...", "gue ngerti...").
+- Slide 6 CTA boleh ajakan follow, tapi JANGAN klaim fakta baru.
+- Kalau ragu, LEBIH BAGUS singkat & jujur daripada karang fakta."""
 
     fact_bank = extract_facts(article_content[:3000])
 
@@ -1128,12 +1223,26 @@ ARTIKEL:
 
                 slides_data = None
                 if content:
-                    slides_data = extract_json_from_content(content)
+                    # v13+ format: try plain text "1/ ... 2/ ... 6/ ..." first
+                    slides_data = extract_plain_text_slides(content)
+                    if not slides_data:
+                        # Fallback: JSON format
+                        slides_data = extract_json_from_content(content)
                 if not slides_data and reasoning:
                     log("[LLM] Content empty, extracting from reasoning...")
                     slides_data = extract_json_from_reasoning(reasoning, content)
-                
+
                 if slides_data:
+                    # Normalize to {slide_N: {"hook": ..., "content": ...}} structure
+                    # for downstream validation/normalize code
+                    normalized = {}
+                    for k, v in slides_data.items():
+                        if isinstance(v, str):
+                            # Plain text format: all text in one field
+                            normalized[k] = {"hook": v if k == "slide_1" else "", "content": v if k != "slide_1" else ""}
+                        elif isinstance(v, dict):
+                            normalized[k] = v
+                    slides_data = normalized if normalized else slides_data
                     hook = slides_data.get("slide_1", {}).get("hook", "") or slides_data.get("slide_1", {}).get("content", "")
                     is_valid, issues = validate_hook(hook)
                     
@@ -1145,7 +1254,7 @@ ARTIKEL:
 
                         # Add \\n\\n between every sentence (mobile readability on Threads)
                         ws_changes = 0
-                        for i in range(1, 8):
+                        for i in range(1, 7):
                             slide = slides_data.get(f"slide_{i}", {})
                             if isinstance(slide, dict):
                                 if slide.get("hook"):
@@ -1189,13 +1298,13 @@ def extract_facts(content):
     if not content:
         return ""
 
-    # Extract numbers (skip year-only and URL-like long sequences)
+    # Extract numbers (skip year-only and URL-like long sequences — 6+ digit usually article IDs/URLs)
     numbers = set()
     for m in re.finditer(r'\d[\d.,]*\d|\d+', content):
         n = m.group()
         if n in {str(y) for y in range(2020, 2031)}:
             continue
-        if len(n.replace('.', '').replace(',', '')) > 6:
+        if len(n.replace('.', '').replace(',', '')) >= 6:  # 6+ digit = URL/article ID, skip
             continue
         numbers.add(n)
 
@@ -1324,12 +1433,12 @@ def count_sentences(text):
     sentences = re.split(r'(?<=[.!?])\s+', text)
     return len([s for s in sentences if s.strip() and len(s.strip()) > 5])
 
-def normalize_slide_sentences(slides_data, min_hook=2, max_hook=4, min_body=2, max_body=5):
+def normalize_slide_sentences(slides_data, min_hook=2, max_hook=4, min_body=2, max_body=4):
     """Normalize slide sentence counts to fit within bounds (no reject — auto-fix).
 
     Per user spec (21 Jun 2026):
       - Slide 1 (hook): 2-4 sentences
-      - Slides 2-7 (body): 2-5 sentences
+      - Slides 2-7 (body): 2-4 sentences
 
     Behavior:
       - Over max → trim to first N sentences (keep first, drop rest)
@@ -1363,8 +1472,8 @@ def normalize_slide_sentences(slides_data, min_hook=2, max_hook=4, min_body=2, m
             elif s1 < min_hook:
                 changes.append(f"slide_1 under min ({s1}<{min_hook})")
 
-    # Slides 2-7 (body): max 5
-    for i in range(2, 8):
+    # Slides 2-6 (body): max 4
+    for i in range(2, 7):
         slide = slides_data.get(f'slide_{i}', {})
         if not isinstance(slide, dict):
             continue
@@ -1406,16 +1515,7 @@ def validate_slide_sentences(slides_data):
         s_count = count_sentences(text)
         if not (2 <= s_count <= 5):
             issues.append(f"slide_{i}: {s_count} sentences (need 2-5)")
-    
-    slide7 = slides_data.get('slide_7', {})
-    if isinstance(slide7, dict):
-        text7 = slide7.get('content', '') or slide7.get('hook', '')
-    else:
-        text7 = str(slide7)
-    s7 = count_sentences(text7)
-    if not (2 <= s7 <= 5):
-        issues.append(f"slide_7: {s7} sentences (need 2-5)")
-    
+
     return len(issues) == 0, issues
 
 def validate_grounding(slides_data, article_text):
@@ -1466,7 +1566,7 @@ def validate_grounding(slides_data, article_text):
                 continue
             
             # Skip long IDs (article IDs, etc.)
-            if len(clean_num) > 6:
+            if len(clean_num) >= 6:  # 6+ digit = URL/article ID, skip
                 continue
             
             # Skip if exact match in article
@@ -1492,7 +1592,7 @@ def validate_grounding(slides_data, article_text):
 def format_slides(slides_data):
     """Format slides data into storytelling format with whitespace."""
     slides = []
-    for i in range(1, 8):
+    for i in range(1, 7):
         key = f"slide_{i}"
         if key in slides_data:
             slide = slides_data[key]
@@ -1815,43 +1915,57 @@ def run_pipeline():
     feedback = load_feedback()
 
     articles = scrape_all_sources()
-    best, best_score = select_best_candidate(articles, posted_urls, feedback, posted_titles)
+    candidates = select_best_candidate(articles, posted_urls, feedback, posted_titles, top_n=3)
 
-    if not best:
+    if not candidates:
         log("No eligible fresh content matches scoring thresholds.", "WARN")
         return False
 
-    article_content = extract_article_content(best["url"])
-    if len(article_content) < 100:
-        log("Extraction results returned sub-par lengths.", "WARN")
-        return False
+    # Try each candidate until one passes the finance niche check
+    for i, (score, best) in enumerate(candidates, 1):
+        log(f"[CANDIDATE {i}/{len(candidates)}] Trying: {best['title']} (score: {score:.1f})")
 
-    slides_data = generate_content(best, article_content)
-    if not slides_data:
-        alert_telegram("LLM core validation failures occurred.")
-        return False
+        article_content = extract_article_content(best["url"])
+        if len(article_content) < 100:
+            log(f"  Extraction too short, skipping", "WARN")
+            continue
 
-    slides = format_slides(slides_data)
-    image_url = extract_image(best['url'])
+        is_finance = is_finance_niche(best, article_content)
+        if not is_finance:
+            log(f"  ❌ Not finance niche, trying next candidate", "WARN")
+            continue
 
-    staging_data = {
-        "title": best["title"],
-        "url": best["url"],
-        "source": best["source"],
-        "score": best_score,
-        "slides": slides,
-        "image_url": image_url or "",
-        "timestamp": datetime.now().isoformat()
-    }
-    save_json(STAGING_FILE, staging_data)
+        log(f"  ✅ Confirmed finance niche, generating content...", "INFO")
+        slides_data = generate_content(best, article_content)
+        if not slides_data:
+            log(f"  Generation failed, trying next candidate", "WARN")
+            continue
 
-    if DRY_RUN:
-        log("🏃 Dry run configured - processing skipped.")
-        update_analytics(staging_data, "dry-run", "dry-run-mode")
-    else:
-        success, r_id, p_link = post_to_threads(staging_data)
-        update_analytics(staging_data, r_id, p_link)
-    return True
+        # Success — save and post
+        slides = format_slides(slides_data)
+        image_url = extract_image(best['url'])
+
+        staging_data = {
+            "title": best["title"],
+            "url": best["url"],
+            "source": best["source"],
+            "score": score,
+            "slides": slides,
+            "image_url": image_url or "",
+            "timestamp": datetime.now().isoformat()
+        }
+        save_json(STAGING_FILE, staging_data)
+
+        if DRY_RUN:
+            log("🏃 Dry run configured - processing skipped.")
+            update_analytics(staging_data, "dry-run", "dry-run-mode")
+        else:
+            success, r_id, p_link = post_to_threads(staging_data)
+            update_analytics(staging_data, r_id, p_link)
+        return True
+
+    log(f"All {len(candidates)} candidates failed finance niche check or generation", "ERROR")
+    return False
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Market Monday Pipeline — All-in-One")
