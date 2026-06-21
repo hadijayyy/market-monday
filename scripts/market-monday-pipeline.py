@@ -244,7 +244,7 @@ CONTROVERSY_KEYWORDS = {
     "bocor", "bocoran", "kebocoran", "temuan",
     "kontroversi", "polemik", "heboh", "ramai",
     "viral", "terkenal", "famous",
-    "sengketa", "gugatan", " class action",
+    "sengketa", "gugatan", "class action",
     "merugikan", "kerugian", "rugi", "merugi",
 }
 
@@ -667,20 +667,23 @@ def score_candidate(article, posted, feedback):
 
     # Controversy boost
     for kw in CONTROVERSY_KEYWORDS:
-        if kw.lower() in combined:
+        if kw.lower() in combined and kw.lower() not in matched_keywords:
             score += 20
+            matched_keywords.add(kw.lower())
             break
 
     # Drama boost
     for kw in DRAMA_KEYWORDS:
-        if kw.lower() in combined:
+        if kw.lower() in combined and kw.lower() not in matched_keywords:
             score += 15
+            matched_keywords.add(kw.lower())
             break
 
     # Clickbait boost
     for kw in CLICKBAIT_KEYWORDS:
-        if kw.lower() in combined:
+        if kw.lower() in combined and kw.lower() not in matched_keywords:
             score += 10
+            matched_keywords.add(kw.lower())
             break
 
     viral_count = 0
@@ -726,12 +729,12 @@ def select_best_candidate(articles, posted, feedback, posted_titles=None):
         log(f"[DEDUP] Skipped {skipped_similar} similar titles")
 
     if not scored:
-        return None
+        return None, None
 
     scored.sort(key=lambda x: x[0], reverse=True)
     best_score, best_article = scored[0]
     log(f"Best candidate: {best_article['title']} (score: {best_score:.1f})")
-    return best_article
+    return best_article, best_score
 
 # ─── CONTENT EXTRACTION ──────────────────────────────────────────────────────
 
@@ -887,7 +890,7 @@ def extract_json_from_content(content):
         json_str = re.sub(r',\s*]', ']', json_str)
         try:
             data = json.loads(json_str)
-        except:
+        except Exception:
             return None
     
     normalized = {}
@@ -1103,7 +1106,7 @@ def add_smart_whitespace(content):
     for abbr in abbreviations:
         protected = protected.replace(f'{abbr}.', f'{abbr}[[DOT]]')
     
-    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', protected)
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Za-z])', protected)
     restored = [sent.replace('[[DOT]]', '.') for sent in sentences]
     return '\n\n'.join(restored)
 
@@ -1129,7 +1132,7 @@ def validate_hook(hook):
         'IKN', 'ibu kota', 'nusantara', 'infrastruktur', 'pembangunan', 'proyek',
         'gedung', 'kota', 'pusat kota', 'cerdas', 'smart city', 'teknologi',
         'operasional', 'beroperasi', 'siap', 'dibangun', 'konstruksi',
-        'utang', 'surat utang', 'obligasi', 'bond', 'investasi asing',
+        'utang', 'surat utang', 'bond', 'investasi asing',
         'RRC', 'China', 'asing', 'global', 'dunia', 'negara',
     ]
     has_konteks = any(word.lower() in hook.lower() for word in konteks_words)
@@ -1139,17 +1142,17 @@ def validate_hook(hook):
         'kosong', 'langka', 'mahal', 'murah', 'phk', 'bangkrut', 'gagal',
         'krisis', 'merugi', 'rugi', 'terpuruk', 'sengsara', 'kolaps', 'viral',
         'antre', 'antrean', 'berdesakan', 'desak', 'rebutan', 'berebut',
-        'rela', 'rela', 'berjuang', 'perjuangan', 'struggle',
-        'miris', 'menyedihkan', 'kasihan', 'kasihan', 'prihatin',
+        'rela', 'berjuang', 'perjuangan', 'struggle',
+        'miris', 'menyedihkan', 'kasihan', 'prihatin',
         'guncang', 'terancam', 'ancaman', 'bahaya', 'risiko',
         'panik', 'ketakutan', 'takut', 'khawatir', 'cemas',
         'heboh', 'ramai', 'polemik', 'kontroversi', 'sorot',
         'gebrakan', 'kejutan', 'terkejut', 'kaget',
-        'darurat', 'krisis', 'emergency',
+        'darurat', 'emergency',
         'tutup', 'hentikan', 'berhenti', 'stop',
         'hilang', 'lenyap', 'tammat', 'berakhir',
         'miskin', 'kaya', 'semakin', 'makin',
-        'gigit', 'was-was', 'cemas', 'khawatir',
+        'gigit', 'was-was',
         'buka suara', 'angkat bicara', 'tanggapi', 'bantah',
     ]
     has_drama = any(word.lower() in hook.lower() for word in drama_words)
@@ -1269,7 +1272,7 @@ def validate_grounding(slides_data, article_text):
 def format_slides(slides_data):
     """Format slides data into storytelling format with whitespace."""
     slides = []
-    for i in range(1, 9):
+    for i in range(1, 8):
         key = f"slide_{i}"
         if key in slides_data:
             slide = slides_data[key]
@@ -1485,7 +1488,7 @@ def analytics_fetch_engagement(tok, post_id):
         for item in r.json().get("data", []):
             metrics[item["name"]] = item["values"][0]["value"]
         return metrics
-    except:
+    except Exception:
         return {"likes": 0, "replies": 0, "reposts": 0, "views": 0, "quotes": 0}
 
 def analytics_calc_score(m):
@@ -1496,7 +1499,7 @@ def analytics_to_wib_hour(ts):
     """Convert strict ISO timestamp boundaries to localized hours integers."""
     try:
         return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(WIB).hour
-    except:
+    except Exception:
         return 12
 
 def run_analytics():
@@ -1590,7 +1593,7 @@ def run_pipeline():
     feedback = load_feedback()
 
     articles = scrape_all_sources()
-    best = select_best_candidate(articles, posted_urls, feedback, posted_titles)
+    best, best_score = select_best_candidate(articles, posted_urls, feedback, posted_titles)
 
     if not best:
         log("No eligible fresh content matches scoring thresholds.", "WARN")
@@ -1613,7 +1616,7 @@ def run_pipeline():
         "title": best["title"],
         "url": best["url"],
         "source": best["source"],
-        "score": score_candidate(best, posted_urls, feedback),
+        "score": best_score,
         "slides": slides,
         "image_url": image_url or "",
         "timestamp": datetime.now().isoformat()
