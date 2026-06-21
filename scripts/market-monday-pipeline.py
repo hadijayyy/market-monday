@@ -465,14 +465,24 @@ def scrape_all_sources():
 # ─── SCORING ─────────────────────────────────────────────────────────────────
 
 def is_fresh(pub_date_str, hours=24):
-    """Check if article is within freshness window."""
+    """Check if article is within freshness window.
+
+    Bug fix (v17.3): previously returned True for future-dated articles
+    (clock skew, wrong timezone in RSS feed) because `age < 0 < hours*3600`.
+    Now requires age to be non-negative AND within window.
+    """
     if not pub_date_str:
         return True
     try:
         pub_date = parsedate_to_datetime(pub_date_str)
         now = datetime.now(timezone.utc)
         age = now - pub_date
-        return age.total_seconds() < hours * 3600
+        age_seconds = age.total_seconds()
+        # Reject future-dated articles (clock skew / TZ mismatch) and old ones
+        if age_seconds < 0:
+            log(f"[FRESH] Future-dated article rejected (age={age_seconds/3600:.1f}h): {pub_date_str[:40]}", "WARN")
+            return False
+        return age_seconds < hours * 3600
     except Exception as e:
         log(f"Date parse error: {e}", "WARN")
         return True
@@ -554,8 +564,19 @@ def select_best_candidate(articles, posted, feedback, posted_titles=None, top_n=
     scored = []
     skipped_similar = 0
     skipped_below_threshold = 0
+    skipped_invalid = 0
 
     for article in articles:
+        # Defensive: skip None or non-dict articles instead of crashing
+        if not isinstance(article, dict):
+            skipped_invalid += 1
+            log(f"[SELECT] Skipped non-dict article: {type(article).__name__}", "WARN")
+            continue
+        if not article.get("title"):
+            skipped_invalid += 1
+            log(f"[SELECT] Skipped article with empty title", "WARN")
+            continue
+
         if posted_titles and is_similar(article["title"], posted_titles):
             skipped_similar += 1
             continue
@@ -570,6 +591,8 @@ def select_best_candidate(articles, posted, feedback, posted_titles=None, top_n=
         log(f"[DEDUP] Skipped {skipped_similar} similar titles")
     if skipped_below_threshold > 0:
         log(f"[SCORING] {skipped_below_threshold} articles below threshold (score <60)")
+    if skipped_invalid > 0:
+        log(f"[SELECT] {skipped_invalid} invalid articles skipped (None/non-dict/empty title)")
 
     if not scored:
         return []
@@ -1530,6 +1553,15 @@ def format_slides(slides_data):
         key = f"slide_{i}"
         if key in slides_data:
             slide = slides_data[key]
+            # Defensive: if slide is a raw string (e.g., from plain-text format that
+            # bypassed normalize), wrap it as a dict. This is a latent crash fix —
+            # current call path normalizes strings → dicts, but future paths may not.
+            if isinstance(slide, str):
+                slide = {"content": slide} if i != 1 else {"hook": slide, "content": ""}
+            if not isinstance(slide, dict):
+                log(f"[FORMAT] slide_{i} unexpected type {type(slide).__name__}, skipping", "WARN")
+                slides.append({"hook": "", "content": ""})
+                continue
             if i == 1:
                 # Hook body lives in `content` per v16 JSON spec, NOT `title` (which is just a header)
                 hook = slide.get("content", "") or slide.get("hook", "") or slide.get("title", "")

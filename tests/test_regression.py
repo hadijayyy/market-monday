@@ -111,3 +111,98 @@ def test_check_include_keywords_no_redundant_re_import():
     src = inspect.getsource(mmp.check_include_keywords)
     assert "import re" not in src
     assert "_re" not in src
+
+
+# ─── Stress test findings (v17.3) ────────────────────────────────────────────
+
+def test_is_fresh_rejects_future_dated_articles():
+    """is_fresh must return False for future-dated articles (clock skew / TZ mismatch).
+
+    Bug: previously `age < 0 < hours*3600` was True, so future-dated articles
+    were treated as fresh AND got max 15 recency points. Now rejects explicitly.
+    """
+    import datetime
+    # 24 hours in the future
+    future = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=24))
+    future_str = future.strftime("%a, %d %b %Y %H:%M:%S +0000")
+    assert mmp.is_fresh(future_str) is False, "Future-dated article must NOT be fresh"
+
+    # Way in the future (1 year)
+    far_future = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365))
+    far_str = far_future.strftime("%a, %d %b %Y %H:%M:%S +0000")
+    assert mmp.is_fresh(far_str) is False
+
+
+def test_is_fresh_accepts_recent_articles():
+    """is_fresh must still return True for articles within the window."""
+    import datetime
+    # 2 hours ago
+    recent = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=2))
+    recent_str = recent.strftime("%a, %d %b %Y %H:%M:%S +0000")
+    assert mmp.is_fresh(recent_str) is True
+
+
+def test_is_fresh_rejects_old_articles():
+    """is_fresh must return False for articles outside the 24h window."""
+    import datetime
+    # 48 hours ago
+    old = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=48))
+    old_str = old.strftime("%a, %d %b %Y %H:%M:%S +0000")
+    assert mmp.is_fresh(old_str) is False
+
+
+def test_format_slides_handles_string_slide():
+    """format_slides must not crash when slide is a raw string (e.g., from
+    plain-text format that bypassed normalize).
+
+    Bug: previously `slide.get(...)` raised AttributeError. Now wraps string
+    as a dict before accessing fields.
+    """
+    # slide_1 as string
+    out = mmp.format_slides({"slide_1": "raw hook text", "slide_2": "raw body"})
+    assert len(out) == 2
+    assert out[0]["hook"] == "raw hook text"
+    assert out[1]["content"] == "raw body"
+
+    # None / non-dict skipped gracefully
+    out = mmp.format_slides({"slide_1": None, "slide_2": 12345})
+    assert len(out) == 2
+    assert out[0]["hook"] == ""  # None → empty
+
+
+def test_select_best_candidate_handles_none_articles():
+    """select_best_candidate must skip None/non-dict articles without crashing.
+
+    Bug: previously crashed with AttributeError on None. Now skips gracefully.
+    """
+    # None in list
+    out = mmp.select_best_candidate([None, None], set(), {}, [], top_n=1)
+    assert out == []
+
+    # Mix of valid + None
+    valid = {
+        "title": "IHSG naik 5% ke level 7000",
+        "url": "https://test.com/1",
+        "source": "CNBC Indonesia",
+        "description": "Pasar modal Indonesia",
+        "published": "Sun, 21 Jun 2026 10:00:00 +0000",
+    }
+    out = mmp.select_best_candidate([None, valid], set(), {}, [], top_n=1)
+    assert len(out) == 1
+    assert out[0][1]["title"] == "IHSG naik 5% ke level 7000"
+
+    # Empty title skipped
+    empty_title = {"title": "", "url": "x", "source": "X", "published": "Sun, 21 Jun 2026 10:00:00 +0000"}
+    out = mmp.select_best_candidate([empty_title], set(), {}, [], top_n=1)
+    assert out == []
+
+
+def test_score_candidate_robust_to_missing_fields():
+    """score_candidate must handle articles with minimal fields (defensive)."""
+    # All defaults — should not crash
+    score = mmp.score_candidate({"title": "IHSG bitcoin", "url": "x"}, set(), {})
+    assert isinstance(score, int) and score >= 0
+
+    # Empty dict
+    score = mmp.score_candidate({}, set(), {})
+    assert isinstance(score, int) and score >= 0
