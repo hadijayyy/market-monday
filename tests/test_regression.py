@@ -206,3 +206,109 @@ def test_score_candidate_robust_to_missing_fields():
     # Empty dict
     score = mmp.score_candidate({}, set(), {})
     assert isinstance(score, int) and score >= 0
+
+
+# ─── Stress test ronde 3 findings (v17.4) ────────────────────────────────────
+
+def test_post_to_threads_requires_both_root_and_permalink():
+    """post_to_threads must return success=True ONLY when BOTH root_id AND
+    permalink are present. Previously returned success=True with permalink=None,
+    which caused update_analytics to store permalink=None for valid posts.
+    """
+    from unittest import mock
+    import subprocess
+
+    staging = {
+        "title": "T", "url": "u", "slides": [
+            {"hook": "H1", "content": ""},
+            {"hook": "", "content": "C2"},
+        ]
+    }
+
+    # Case 1: root_id only (no permalink) — should be FAIL
+    with mock.patch('subprocess.run') as mr:
+        mr.return_value.returncode = 0
+        mr.return_value.stdout = "Root: abc123\n"
+        mr.return_value.stderr = ""
+        success, rid, link = mmp.post_to_threads(staging)
+        assert success is False, "Root-only output should NOT be success"
+        assert rid is None and link is None
+
+    # Case 2: both root and permalink — should be SUCCESS
+    with mock.patch('subprocess.run') as mr:
+        mr.return_value.returncode = 0
+        mr.return_value.stdout = "Root: abc123\nPost: https://threads.net/x\n"
+        mr.return_value.stderr = ""
+        success, rid, link = mmp.post_to_threads(staging)
+        assert success is True
+        assert rid == "abc123"
+        assert link == "https://threads.net/x"
+
+    # Case 3: permalink only (no root) — should be FAIL
+    with mock.patch('subprocess.run') as mr:
+        mr.return_value.returncode = 0
+        mr.return_value.stdout = "Post: https://threads.net/x\n"
+        mr.return_value.stderr = ""
+        success, rid, link = mmp.post_to_threads(staging)
+        assert success is False
+
+
+def test_call_llm_preserves_partial_content_on_stream_die():
+    """call_llm must return any partial content already buffered when the
+    stream connection dies mid-flight (ChunkedEncodingError). Previously
+    discarded all tokens, wasting API spend.
+    """
+    from unittest import mock
+    import requests as r
+
+    class FakeResponse:
+        status_code = 200
+        def iter_lines(self):
+            yield b'data: {"choices": [{"delta": {"content": "Hello "}}]}'
+            yield b'data: {"choices": [{"delta": {"content": "world"}}]}'
+            # Stream dies
+            raise r.exceptions.ChunkedEncodingError("conn broken")
+
+    with mock.patch('requests.post') as mp:
+        mp.return_value = FakeResponse()
+        # MiniMax-M3 has reasoning_effort opt-in, M3 route
+        content, reasoning = mmp.call_llm("sys", "user", "MiniMax-M3")
+        # We should get the partial content, not None
+        assert content is not None, "Partial content must be preserved"
+        assert "Hello" in content and "world" in content
+
+
+def test_update_analytics_serializes_concurrent_writes():
+    """update_analytics must serialize concurrent writes via file lock to
+    prevent data loss. Without lock, 10 threads writing 10 unique URLs lose
+    ~70% of writes due to read-modify-write race.
+    """
+    import tempfile, shutil, threading
+    from pathlib import Path
+
+    tmpdir = Path(tempfile.mkdtemp())
+    try:
+        orig_data = mmp.DATA_DIR
+        orig_posted = mmp.POSTED_FILE
+        orig_cache = mmp.TITLE_CACHE_FILE
+        mmp.DATA_DIR = tmpdir
+        mmp.POSTED_FILE = tmpdir / "posted.json"
+        mmp.TITLE_CACHE_FILE = tmpdir / "cache.json"
+
+        def write(i):
+            st = {"title": f"Article-{i}", "url": f"https://test.com/{i}",
+                  "source": "X", "score": 60, "slides": [{"hook": "", "content": "x"}]}
+            mmp.update_analytics(st, f"root-{i}", f"https://threads.net/{i}")
+
+        threads = [threading.Thread(target=write, args=(i,)) for i in range(20)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+
+        posted = mmp.load_json(mmp.POSTED_FILE)
+        # All 20 unique URLs must be persisted
+        assert len(posted) == 20, f"Expected 20 posts, got {len(posted)} (lock failed)"
+    finally:
+        mmp.DATA_DIR = orig_data
+        mmp.POSTED_FILE = orig_posted
+        mmp.TITLE_CACHE_FILE = orig_cache
+        shutil.rmtree(tmpdir, ignore_errors=True)

@@ -743,36 +743,43 @@ def call_llm(system_prompt, user_prompt, model):
 
     try:
         r = requests.post(api_url, headers=headers, json=payload, timeout=LLM_TIMEOUT, stream=True)
-        
+
         if r.status_code != 200:
             log(f"LLM API error ({model}): HTTP {r.status_code}", "ERROR")
             return None, None
 
         content_parts = []
         reasoning_parts = []
-        for line in r.iter_lines():
-            if not line:
-                continue
-            line = line.decode("utf-8")
-            if not line.startswith("data: "):
-                continue
-            data_str = line[6:]
-            if data_str.strip() == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data_str)
-                choices = chunk.get("choices", [])
-                if not choices:
+        # Bug fix (v17.4): if stream dies mid-flight (ChunkedEncodingError, timeout,
+        # connection reset), return any partial content we already buffered instead
+        # of throwing away paid tokens. Only return None,None if NOTHING was received.
+        try:
+            for line in r.iter_lines():
+                if not line:
                     continue
-                delta = choices[0].get("delta", {})
-                if "content" in delta and delta["content"]:
-                    content_parts.append(delta["content"])
-                if "reasoning_content" in delta and delta["reasoning_content"]:
-                    reasoning_parts.append(delta["reasoning_content"])
-                if "reasoning" in delta and delta["reasoning"]:
-                    reasoning_parts.append(delta["reasoning"])
-            except json.JSONDecodeError:
-                continue
+                line = line.decode("utf-8")
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str.strip() == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    choices = chunk.get("choices", [])
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
+                    if "content" in delta and delta["content"]:
+                        content_parts.append(delta["content"])
+                    if "reasoning_content" in delta and delta["reasoning_content"]:
+                        reasoning_parts.append(delta["reasoning_content"])
+                    if "reasoning" in delta and delta["reasoning"]:
+                        reasoning_parts.append(delta["reasoning"])
+                except json.JSONDecodeError:
+                    continue
+        except (requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError) as e:
+            # Stream died mid-flight — salvage whatever we got
+            log(f"[LLM] Stream interrupted ({model}): {e}; partial content kept", "WARN")
 
         content = "".join(content_parts).strip()
         reasoning = "".join(reasoning_parts).strip()
@@ -1613,9 +1620,15 @@ def post_to_threads(staging_data):
             elif line.startswith('Post:'):
                 permalink = line.split('Post:')[1].strip()
 
-        if root_id:
+        # Bug fix (v17.4): require BOTH root_id AND permalink for success.
+        # Previously returned success=True with permalink=None, which caused
+        # update_analytics to store permalink=None for valid posts.
+        if root_id and permalink:
             log(f"[POST] ✅ Posted to Threads: {permalink}")
             return True, root_id, permalink
+        elif root_id and not permalink:
+            log(f"[POST] ⚠️ Got root_id but no permalink (post may have failed): {root_id}", "WARN")
+            return False, None, None
         else:
             log(f"[POST] ❌ No root post ID found. Output: {output[:200]}", "ERROR")
             return False, None, None
@@ -1628,8 +1641,46 @@ def post_to_threads(staging_data):
         return False, None, None
 
 def update_analytics(staging_data, root_id=None, permalink=None):
-    """Update analytics data store after a post execution."""
-    posted = load_json(POSTED_FILE, {})
+    """Update analytics data store after a post execution.
+
+    Bug fix (v17.4): added file lock to prevent race condition when multiple
+    processes (cron overlap, parallel runs) write to POSTED_FILE/TITLE_CACHE_FILE
+    simultaneously. Without lock, load → modify → save is non-atomic — concurrent
+    writers lose each other's updates.
+    """
+    _safe_json_update(POSTED_FILE, _do_posted_update, staging_data, root_id, permalink)
+    _safe_json_update(TITLE_CACHE_FILE, _do_title_cache_update, staging_data)
+    log(f"[ANALYTICS] Updated cache for: {staging_data['title'][:50]}...")
+
+
+def _safe_json_update(path, updater, *args):
+    """Load → modify → save with file lock to prevent concurrent-write corruption.
+
+    Uses fcntl.flock (POSIX). No-op on platforms without fcntl (e.g. Windows).
+    Lock is per-process; multiple threads in same process still serialize via GIL.
+    """
+    import fcntl as _fcntl
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    try:
+        with open(lock_path, "w") as lockf:
+            try:
+                _fcntl.flock(lockf.fileno(), _fcntl.LOCK_EX)
+                data = load_json(path, {})
+                data = updater(data, *args)
+                save_json(path, data)
+            finally:
+                _fcntl.flock(lockf.fileno(), _fcntl.LOCK_UN)
+    except (ImportError, AttributeError, OSError):
+        # No flock available (Windows) or other lock error — best-effort without lock
+        data = load_json(path, {})
+        data = updater(data, *args)
+        save_json(path, data)
+
+
+def _do_posted_update(posted, staging_data, root_id, permalink):
+    """Updater for POSTED_FILE — adds/overwrites a post entry."""
     posted[staging_data["url"]] = {
         "title": staging_data["title"],
         "url": staging_data["url"],
@@ -1641,15 +1692,17 @@ def update_analytics(staging_data, root_id=None, permalink=None):
         "permalink": permalink,
         "engagement": {"likes": 0, "replies": 0, "shares": 0, "views": 0}
     }
-    save_json(POSTED_FILE, posted)
+    return posted
 
-    title_cache = load_json(TITLE_CACHE_FILE, {"titles": []})
-    if staging_data["title"] not in title_cache["titles"]:
-        title_cache["titles"].append(staging_data["title"])
-        title_cache["titles"] = title_cache["titles"][-100:]
-        save_json(TITLE_CACHE_FILE, title_cache)
 
-    log(f"[ANALYTICS] Updated cache for: {staging_data['title'][:50]}...")
+def _do_title_cache_update(cache, staging_data):
+    """Updater for TITLE_CACHE_FILE — appends new title, trims to last 100."""
+    if "titles" not in cache:
+        cache["titles"] = []
+    if staging_data["title"] not in cache["titles"]:
+        cache["titles"].append(staging_data["title"])
+        cache["titles"] = cache["titles"][-100:]
+    return cache
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODE: --benchmark
