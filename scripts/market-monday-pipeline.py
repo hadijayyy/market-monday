@@ -1160,38 +1160,40 @@ def extract_json_from_reasoning(reasoning, content=""):
 def generate_content(article, article_content):
     """Generate Threads content via LLM with model fallback."""
     handle = THREADS_HANDLE
-    system_prompt = f"""FORMAT (output sebagai plain text):
-1/ Teks slide pertama.
-2/ Teks slide kedua.
-3/ Teks slide ketiga.
-4/ Teks slide keempat.
-5/ Teks slide kelima.
-6/ Teks slide keenam (CTA).
+    system_prompt = f"""Content strategist ekonomi/pasar Indonesia. Output EXACTLY 6-slide JSON carousel dari artikel.
 
-STRUKTUR (6 slide):
-1/ Hook: WAJIB ada ANGKA + EMOSI + FINANCE. Contoh: "73% orang Indonesia gak punya dana darurat, dan itu bahaya buat lo kalau besok kena PHK mendadak."
-2/ Konteks: hubungkan ke kehidupan pembaca (gaji, cicilan, gaya hidup).
-3/ Data: fakta dari artikel, bahasa casual. Bungkus angka di analogi uang, bukan laporan.
-4/ Empati: "gue paham", "lo gak sendirian". Validasi rasa malu soal duit, takut cek saldo, dll.
-5/ Twist + Refleksi: fakta baru + "ini gue banget". Bukan nasihat finansial.
-6/ CTA: pertanyaan memancing + "Follow {handle}".
+[SUMBER]
+Hanya gunakan isi artikel — konten yang benar-benar dilaporkan. Abaikan navigasi, link artikel terkait, iklan, byline, dan boilerplate.
 
-ATURAN:
-- Gaya: casual, "lo/gue/kita". Seperti ngobrol sama temen soal duit.
-- Setiap slide PUNYA PINT BARU, jangan ulang.
-- Karakter/tema dari slide 1 hidup terus di slide 2-5.
-- Data dibungkus analogi rupiah / kebiasaan finansial, bukan bahasa bank.
-- Slide 4-5 = EMPATI: beri validasi > nasihat. Banyak orang malu ngomongin duit.
-- JANGAN pakai jargon finansial (likuiditas, alokasi aset, diversifikasi) kecuali artikel yang nyebut.
+[ALUR NARATIF]
+6 slide adalah 1 cerita, bukan 6 fakta terpisah. Slide 1 menanam pertanyaan/tekanan. Slide 2-5 masing-masing MENAIKKAN STAKE atau MEMPERUMIT beat sebelumnya. Slide 6 menutup loop dari hook slide 1. Callback yang menambah sudut pandang baru diperbolehkan; pengulangan datar fakta yang sama TIDAK. Aturan ini hanya mengatur framing — JANGAN mengarang koneksi/eskalasi/callback yang tidak didukung artikel.
 
-ANTI-HALUSINASI (WAJIB):
-- Slide 1-3: HANYA ambil fakta, data, angka, nama ahli/peneliti/institusi, dan kutipan dari ARTIKEL.
-- JANGAN tambahkan fakta/angka/penelitian/statistik yang TIDAK ADA di artikel.
-- Kalau artikel sebut "dr. X" / "ahli Y" / "Bank Z" → pakai nama itu. Kalau gak ada, JANGAN karang nama.
-- Kalau artikel gak punya data angka, JANGAN pakai angka spesifik di hook.
-- Slide 4-6 boleh pakai POV/opini/pengalaman pribadi ("gue pernah boncos...", "lo pasti ngerasa...", "gue ngerti...").
-- Slide 6 CTA boleh ajakan follow, tapi JANGAN klaim fakta baru.
-- Kalau ragu, LEBIH BAGUS singkat & jujur daripada karang fakta."""
+[SLIDES — capai jumlah kalimat MIN, tanpa kecuali]
+1. HOOK (2-3 kalimat, MIN 2): Fakta, kutipan, atau angka paling kontroversial/mengejutkan/paradoks dari artikel. Ini adalah PERTANYAAN yang dijawab carousel. Kalau artikel benar-benar flat (update rutin, tanpa tekanan), pilih detail paling konkret/spesifik sebagai hook — slide 6 akan resolve secara flat, bukan dramatis.
+2. WHAT (3-4 kalimat, MIN 3 — tidak boleh kurang dari 3): Apa yang terjadi, konkret, kenapa ini penting. MENAIKKAN STAKE dari slide 1.
+3. TENSION (2-4 kalimat, MIN 2): Konflik, ketidaksetujuan, atau stake yang bersaing — MEMPERUMIT slide 2. Artikel satu sisi: nyatakan langsung ("Artikel cuma cover perspektif [X]"). Tidak ada tension nyata: nyatakan apa yang sebenarnya notable, jangan paksakan konflik.
+4. HUMAN (2-4 kalimat, MIN 2): Satu orang bernama, kata-katanya sendiri atau perasaan yang dilaporkan dengan jelas. Bikin tension slide 3 punya BIAYA ke orang nyata. Tidak ada kutipan yang usable: TEPAT DUA kalimat — (1) "Tidak ada kutipan langsung dari [Nama] di laporan ini" (2) satu kalimat tentang apa yang diketahui tentang situasinya. JANGAN hanya fallback saja.
+5. UNRESOLVED (2-3 kalimat, MIN 2): Apa yang masih terbuka — hasil, keputusan, fakta yang belum diketahui. MENGASAH pertanyaan asli slide 1, bukan celah yang tidak terkait.
+6. CTA (2-4 kalimat, MIN 2): Opini tajam yang grounded di fakta, lalu pertanyaan debatable dengan jawaban tertutup (ya/tidak, ini-atau-itu, atau prediksi — JANGAN "menurut lo gimana?"). HARUS kembali ke hook slide 1 — jawab, tantang, atau duduk di tension-nya — menggunakan HANYA fakta yang sudahstated di carousel ini. Baris terakhir: URL sumber kalau ada, kalau tidak ada nama sumber (contoh: "Sumber: IDX Channel"). Hapus baris ini kalau keduanya tidak tersedia.
+
+[FORMAT — JSON only, tanpa preamble, tanpa markdown fences]
+{{"slide_1":{{"title":"HOOK","content":"..."}},"slide_2":{{"title":"WHAT","content":"..."}},"slide_3":{{"title":"TENSION","content":"..."}},"slide_4":{{"title":"HUMAN","content":"..."}},"slide_5":{{"title":"UNRESOLVED","content":"..."}},"slide_6":{{"title":"CTA","content":"..."}}}}
+
+[GROUNDING — KETAT]
+Nama, skor, tanggal, kutipan: VERBATIM. Zero outside knowledge. Detail yang hilang = omit atau flag (lihat slide 3/4). JANGAN mengarang, memparafrase perasaan, atau menutup celah dengan pengetahuan umum pasar. Slide 5-6 boleh bawa opini, tapi harus trace ke fakta spesifik yang sudahstated — bukan punditry generik.
+
+[REJECTION]
+Tidak bisa mengisi slide 1-4 dengan fakta nyata, berbeda, tanpa fabricate atau pad lebih dari satu slide? Output hanya:
+{{"error":"insufficient_source","reason":"<satu kalimat: apa yang missing>"}}
+Cari artikel lain. JANGAN carousel parsial atau dipotong.
+
+[STYLE]
+- Percakapan, Bahasa Indonesia casual, satu ide per kalimat, setiap kalimat diikuti \\n\\n. Setiap slide menambah fakta/sudut pandang baru — callback untuk escalate/close loop diperbolehkan, pengulangan datar TIDAK.
+- Bahasa: ID+EN mix. "Lo/gue/kita" max 1x per slide (PILIH salah satu, BUKAN dua-duanya).
+- Hindari klise drama kosong dan intensifier空虚 ("pasar gonjang-ganjing", "move mengejutkan", "tak terduga", "waktu yang akan menentukan", dan sejenisnya).
+- Dilarang: em dash (—), hashtag, bullet point, ALL CAPS, AI throat-clearing ("Sebagai kesimpulan", "Patut dicatat", "Pada akhirnya").
+- Sumber artikel bahasa Indonesia: pertahankan nama institusi/perusahaan/Pejabat dalam bentuk asli, tulis semua konten slide dalam Bahasa Indonesia.
+- Selalu ekspresikan angka dalam istilah awam di penyebutan pertama (contoh: "suku bunga naik dari 5,5% ke 6%" bukan "kenaikan 50bps") supaya slide berdiri sendiri tanpa perlu artikel lengkap."""
 
     fact_bank = extract_facts(article_content[:3000])
 
@@ -1367,63 +1369,29 @@ def add_smart_whitespace(content):
     return '\n\n'.join(restored)
 
 def validate_hook(hook):
-    """Validate that hook has at least 2 of 3 elements: ANGKA + KONTEKS + DRAMA.
-    
-    ANGKA is optional — articles without numbers can still pass if KONTEKS + DRAMA are present.
+    """Validate that hook has substance (per v14 spec).
+
+    New spec just requires: "The single most consequential, surprising,
+    or counterintuitive fact, number, or quote in the article."
+
+    Light validation:
+      - Must have at least 1 sentence
+      - Should reference article content (presence of a number/percent OR
+        a recognizable entity name OR a non-trivial length)
     """
     issues = []
-    
-    has_angka = bool(re.search(r'\d+', hook))
-    
-    konteks_words = [
-        'gaji', 'harga', 'sembako', 'BBM', 'rumah', 'IHSG', 'saham', 'investasi', 
-        'properti', 'KPR', 'cicilan', 'pangan', 'beras', 'minyak', 'energi',
-        'ekonomi', 'pasar', 'defisit', 'inflasi', 'suku bunga', 'BI rate',
-        'ekspor', 'impor', 'neraca', 'komoditas', 'kripto', 'dollar', 'rupiah',
-        'buruh', 'pekerja', 'karyawan', 'phk', 'industri', 'pabrik', 'umkm', 'usaha',
-        'petani', 'pertanian', 'cabai', 'tanaman', 'panen',
-        'asuransi', 'bank', 'pinjam', 'kredit', 'aset', 'dana', 'modal',
-        'reksadana', 'obligasi', 'deposito', 'tabungan', 'kas',
-        'pajak', 'regulasi', 'kebijakan', 'apbn', 'apbd',
-        'IKN', 'ibu kota', 'nusantara', 'infrastruktur', 'pembangunan', 'proyek',
-        'gedung', 'kota', 'pusat kota', 'cerdas', 'smart city', 'teknologi',
-        'operasional', 'beroperasi', 'siap', 'dibangun', 'konstruksi',
-        'utang', 'surat utang', 'bond', 'investasi asing',
-        'RRC', 'China', 'asing', 'global', 'dunia', 'negara',
-    ]
-    has_konteks = any(word.lower() in hook.lower() for word in konteks_words)
-    
-    drama_words = [
-        'naik', 'turun', 'anjlok', 'meledak', 'ambruk', 'jatuh', 'rally',
-        'kosong', 'langka', 'mahal', 'murah', 'phk', 'bangkrut', 'gagal',
-        'krisis', 'merugi', 'rugi', 'terpuruk', 'sengsara', 'kolaps', 'viral',
-        'antre', 'antrean', 'berdesakan', 'desak', 'rebutan', 'berebut',
-        'rela', 'berjuang', 'perjuangan', 'struggle',
-        'miris', 'menyedihkan', 'kasihan', 'prihatin',
-        'guncang', 'terancam', 'ancaman', 'bahaya', 'risiko',
-        'panik', 'ketakutan', 'takut', 'khawatir', 'cemas',
-        'heboh', 'ramai', 'polemik', 'kontroversi', 'sorot',
-        'gebrakan', 'kejutan', 'terkejut', 'kaget',
-        'darurat', 'emergency',
-        'tutup', 'hentikan', 'berhenti', 'stop',
-        'hilang', 'lenyap', 'tammat', 'berakhir',
-        'miskin', 'kaya', 'semakin', 'makin',
-        'gigit', 'was-was',
-        'buka suara', 'angkat bicara', 'tanggapi', 'bantah',
-    ]
-    has_drama = any(word.lower() in hook.lower() for word in drama_words)
-    
-    # Count how many elements are present
-    elements_present = sum([has_angka, has_konteks, has_drama])
-    
-    if elements_present < 1:
-        if not has_angka:
-            issues.append("GAK ADA ANGKA SPESIFIK")
-        if not has_konteks:
-            issues.append("GAK ADA KONTEKS YANG JELAS")
-        if not has_drama:
-            issues.append("GAK ADA DRAMA/EMOSI")
-    
+
+    if not hook or len(hook.strip()) < 10:
+        issues.append("hook too short or empty")
+        return False, issues
+
+    has_number = bool(re.search(r'\d', hook))
+    word_count = len(hook.split())
+
+    # Very permissive: just check it's not a single word or empty
+    if word_count < 3:
+        issues.append("hook too short (<3 words)")
+
     return len(issues) == 0, issues
 
 def count_sentences(text):
@@ -1433,18 +1401,32 @@ def count_sentences(text):
     sentences = re.split(r'(?<=[.!?])\s+', text)
     return len([s for s in sentences if s.strip() and len(s.strip()) > 5])
 
-def normalize_slide_sentences(slides_data, min_hook=2, max_hook=4, min_body=2, max_body=4):
-    """Normalize slide sentence counts to fit within bounds (no reject — auto-fix).
+def normalize_slide_sentences(slides_data):
+    """Normalize slide sentence counts to fit per-slide bounds (no reject — auto-fix).
 
-    Per user spec (21 Jun 2026):
-      - Slide 1 (hook): 2-4 sentences
-      - Slides 2-7 (body): 2-4 sentences
+    Per spec (v14, 21 Jun 2026) — different bounds per slide:
+      - slide_1 HOOK:        min 1, max 3
+      - slide_2 WHAT:        min 3, max 4
+      - slide_3 TENSION:     min 2, max 4
+      - slide_4 HUMAN/DATA:  min 2, max 4
+      - slide_5 UNRESOLVED:  min 2, max 3
+      - slide_6 CTA:         min 2, max 4
 
     Behavior:
       - Over max → trim to first N sentences (keep first, drop rest)
       - Under min → pass through, log warning (padding risks fabrication)
     Returns: (normalized_slides_data, list_of_changes)
     """
+    # Per-slide bounds (v15 — matches football spec with HOOK MIN 2)
+    bounds = {
+        1: (2, 3),   # HOOK
+        2: (3, 4),   # WHAT
+        3: (2, 4),   # TENSION
+        4: (2, 4),   # HUMAN
+        5: (2, 3),   # UNRESOLVED
+        6: (2, 4),   # CTA
+    }
+
     changes = []
 
     def trim_text(text, max_n):
@@ -1457,64 +1439,54 @@ def normalize_slide_sentences(slides_data, min_hook=2, max_hook=4, min_body=2, m
             return ' '.join(valid[:max_n])
         return text
 
-    # Slide 1 (hook): max 4
-    slide1 = slides_data.get('slide_1', {})
-    if isinstance(slide1, dict):
-        text1 = slide1.get('hook', '') or slide1.get('content', '')
-        if text1:
-            s1 = count_sentences(text1)
-            if s1 > max_hook:
-                trimmed = trim_text(text1, max_hook)
-                if 'hook' in slide1 and slide1['hook']:
-                    slide1['hook'] = trimmed
-                else:
-                    slide1['content'] = trimmed
-            elif s1 < min_hook:
-                changes.append(f"slide_1 under min ({s1}<{min_hook})")
-
-    # Slides 2-6 (body): max 4
-    for i in range(2, 7):
+    for i in range(1, 7):
         slide = slides_data.get(f'slide_{i}', {})
         if not isinstance(slide, dict):
             continue
         text = slide.get('content', '') or slide.get('hook', '')
         if not text:
             continue
+        min_n, max_n = bounds[i]
         s = count_sentences(text)
-        if s > max_body:
-            trimmed = trim_text(text, max_body)
+        if s > max_n:
+            trimmed = trim_text(text, max_n)
             if 'content' in slide and slide['content']:
                 slide['content'] = trimmed
             else:
                 slide['hook'] = trimmed
-        elif s < min_body:
-            changes.append(f"slide_{i} under min ({s}<{min_body})")
+        elif s < min_n:
+            changes.append(f"slide_{i} under min ({s}<{min_n})")
 
     return slides_data, changes
 
 
 def validate_slide_sentences(slides_data):
-    """Validate sentence counts per slide (+1 tolerance)."""
+    """Validate sentence counts per slide (per-slide bounds, no tolerance).
+
+    Per v15 spec (21 Jun 2026):
+      - slide_1 HOOK:        2-3 sentences
+      - slide_2 WHAT:        3-4 sentences
+      - slide_3 TENSION:     2-4 sentences
+      - slide_4 HUMAN:       2-4 sentences
+      - slide_5 UNRESOLVED:  2-3 sentences
+      - slide_6 CTA:         2-4 sentences
+    """
+    bounds = {
+        1: (2, 3), 2: (3, 4), 3: (2, 4),
+        4: (2, 4), 5: (2, 3), 6: (2, 4),
+    }
     issues = []
-    
-    slide1 = slides_data.get('slide_1', {})
-    if isinstance(slide1, dict):
-        text1 = slide1.get('hook', '') or slide1.get('content', '')
-    else:
-        text1 = str(slide1)
-    s1 = count_sentences(text1)
-    if not (2 <= s1 <= 4):
-        issues.append(f"slide_1: {s1} sentences (need 2-4)")
-    
-    for i in range(2, 7):
+
+    for i in range(1, 7):
         slide = slides_data.get(f'slide_{i}', {})
         if isinstance(slide, dict):
             text = slide.get('content', '') or slide.get('hook', '')
         else:
             text = str(slide)
         s_count = count_sentences(text)
-        if not (2 <= s_count <= 5):
-            issues.append(f"slide_{i}: {s_count} sentences (need 2-5)")
+        min_n, max_n = bounds[i]
+        if not (min_n <= s_count <= max_n):
+            issues.append(f"slide_{i}: {s_count} sentences (need {min_n}-{max_n})")
 
     return len(issues) == 0, issues
 
