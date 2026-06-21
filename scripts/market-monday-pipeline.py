@@ -65,8 +65,8 @@ DRY_RUN = False
 FORCE_MODEL = None
 # Threads account handle for CTA "Follow @{handle}". Edit if account changes.
 THREADS_HANDLE = "@parkthebus.football"
-LLM_MAX_TOKENS = 10000  # bumped 6000→10000 — M3 verbose responses (~24k chars) were truncating mid-thought
-LLM_TIMEOUT = 180  # bumped 90→180s to cover M3 fallback (~2 min/call per skill note)
+LLM_MAX_TOKENS = 16000  # bumped 10000→16000 — v15 prompt strict checks cause M3 over-planning, hits budget mid-thought
+LLM_TIMEOUT = 240  # bumped 180→240s — M3 fallback takes 3-4 min with longer thinking
 
 # SIMILARITY
 SIMILARITY_THRESHOLD = 0.35
@@ -1053,18 +1053,33 @@ def extract_json_from_content(content):
                 return None
     
     normalized = {}
-    for i in range(1, 8):
+    for i in range(1, 7):  # v16: 6 slides, not 7
         key = f"slide_{i}"
-        if key in data:
-            val = data[key]
-            if isinstance(val, str):
-                if i == 1:
-                    normalized[key] = {"hook": val, "content": ""}
-                else:
-                    normalized[key] = {"hook": "", "content": val}
-            elif isinstance(val, dict):
-                normalized[key] = val
-    
+        slide_val = None
+
+        # v16 reference format: nested under "slides" key
+        if "slides" in data and isinstance(data["slides"], dict):
+            slide_val = data["slides"].get(key)
+
+        # v14/v15 fallback: flat top-level slide_N
+        if slide_val is None and key in data:
+            slide_val = data[key]
+
+        if slide_val is None:
+            continue
+
+        if isinstance(slide_val, str):
+            if i == 1:
+                normalized[key] = {"type": "hook", "title": "HOOK", "hook": slide_val, "content": ""}
+            else:
+                normalized[key] = {"type": f"slide_{i}", "title": f"SLIDE {i}", "hook": "", "content": slide_val}
+        elif isinstance(slide_val, dict):
+            # v16 reference: {"type": "hook", "title": "...", "content": "...", "facts_used": [...], ...}
+            # Ensure "content" exists (other metadata like facts_used, loops_to_slide_1 also preserved)
+            if "content" not in slide_val and "text" in slide_val:
+                slide_val["content"] = slide_val["text"]
+            normalized[key] = slide_val
+
     if len(normalized) >= 6:
         log(f"   extract_json_from_content: found {len(normalized)} slides")
         return normalized
@@ -1160,40 +1175,155 @@ def extract_json_from_reasoning(reasoning, content=""):
 def generate_content(article, article_content):
     """Generate Threads content via LLM with model fallback."""
     handle = THREADS_HANDLE
-    system_prompt = f"""Content strategist ekonomi/pasar Indonesia. Output EXACTLY 6-slide JSON carousel dari artikel.
+    system_prompt = """# ROLE
+You are a senior Threads content writer for the finance niche. Your job: turn ONE article into a 6-slide carousel that feels like a story, not a summary.
 
-[SUMBER]
-Hanya gunakan isi artikel — konten yang benar-benar dilaporkan. Abaikan navigasi, link artikel terkait, iklan, byline, dan boilerplate.
+# INPUT
+- ARTICLE: [paste full article text below this prompt]
+- NICHE: finance (crypto/stocks/macro/personal finance — match article)
 
-[ALUR NARATIF]
-6 slide adalah 1 cerita, bukan 6 fakta terpisah. Slide 1 menanam pertanyaan/tekanan. Slide 2-5 masing-masing MENAIKKAN STAKE atau MEMPERUMIT beat sebelumnya. Slide 6 menutup loop dari hook slide 1. Callback yang menambah sudut pandang baru diperbolehkan; pengulangan datar fakta yang sama TIDAK. Aturan ini hanya mengatur framing — JANGAN mengarang koneksi/eskalasi/callback yang tidak didukung artikel.
+# CORE RULES (NON-NEGOTIABLE)
 
-[SLIDES — capai jumlah kalimat MIN, tanpa kecuali]
-1. HOOK (2-3 kalimat, MIN 2): Fakta, kutipan, atau angka paling kontroversial/mengejutkan/paradoks dari artikel. Ini adalah PERTANYAAN yang dijawab carousel. Kalau artikel benar-benar flat (update rutin, tanpa tekanan), pilih detail paling konkret/spesifik sebagai hook — slide 6 akan resolve secara flat, bukan dramatis.
-2. WHAT (3-4 kalimat, MIN 3 — tidak boleh kurang dari 3): Apa yang terjadi, konkret, kenapa ini penting. MENAIKKAN STAKE dari slide 1.
-3. TENSION (2-4 kalimat, MIN 2): Konflik, ketidaksetujuan, atau stake yang bersaing — MEMPERUMIT slide 2. Artikel satu sisi: nyatakan langsung ("Artikel cuma cover perspektif [X]"). Tidak ada tension nyata: nyatakan apa yang sebenarnya notable, jangan paksakan konflik.
-4. HUMAN (2-4 kalimat, MIN 2): Satu orang bernama, kata-katanya sendiri atau perasaan yang dilaporkan dengan jelas. Bikin tension slide 3 punya BIAYA ke orang nyata. Tidak ada kutipan yang usable: TEPAT DUA kalimat — (1) "Tidak ada kutipan langsung dari [Nama] di laporan ini" (2) satu kalimat tentang apa yang diketahui tentang situasinya. JANGAN hanya fallback saja.
-5. UNRESOLVED (2-3 kalimat, MIN 2): Apa yang masih terbuka — hasil, keputusan, fakta yang belum diketahui. MENGASAH pertanyaan asli slide 1, bukan celah yang tidak terkait.
-6. CTA (2-4 kalimat, MIN 2): Opini tajam yang grounded di fakta, lalu pertanyaan debatable dengan jawaban tertutup (ya/tidak, ini-atau-itu, atau prediksi — JANGAN "menurut lo gimana?"). HARUS kembali ke hook slide 1 — jawab, tantang, atau duduk di tension-nya — menggunakan HANYA fakta yang sudahstated di carousel ini. Baris terakhir: URL sumber kalau ada, kalau tidak ada nama sumber (contoh: "Sumber: IDX Channel"). Hapus baris ini kalau keduanya tidak tersedia.
+1. **Anti-halusinasi:** Every fact in slides 1-4 MUST be verbatim or directly paraphrased from the article. If a fact isn't in the article, cut it.
+2. **Verbatim grounding:** When citing numbers, dates, names, or quotes — copy from the article. Don't reword statistics.
+3. **Slides 5-6:** Personal POV allowed. Mark clearly with "POV:" or in separate opinion section.
+4. **No external knowledge:** Don't add context the article doesn't have.
+5. **If article is thin/weak:** Output {"error": "article_too_thin", "missing": [...]} and stop. Don't pad with filler.
+6. **Self-check before output:** All facts in slides 1-4 traceable to article? If unsure, drop the fact.
 
-[FORMAT — JSON only, tanpa preamble, tanpa markdown fences]
-{{"slide_1":{{"title":"HOOK","content":"..."}},"slide_2":{{"title":"WHAT","content":"..."}},"slide_3":{{"title":"TENSION","content":"..."}},"slide_4":{{"title":"HUMAN","content":"..."}},"slide_5":{{"title":"UNRESOLVED","content":"..."}},"slide_6":{{"title":"CTA","content":"..."}}}}
+# STRUCTURE (6 SLIDES, STORY ARC)
 
-[GROUNDING — KETAT]
-Nama, skor, tanggal, kutipan: VERBATIM. Zero outside knowledge. Detail yang hilang = omit atau flag (lihat slide 3/4). JANGAN mengarang, memparafrase perasaan, atau menutup celah dengan pengetahuan umum pasar. Slide 5-6 boleh bawa opini, tapi harus trace ke fakta spesifik yang sudahstated — bukan punditry generik.
+[SLIDE 1: HOOK]          -> Emotional, relatable, NO facts yet
+[SLIDE 2: SETUP]         -> What happened (context from article)
+[SLIDE 3: COMPLICATION]  -> Why it matters / what's at stake
+[SLIDE 4: INSIGHT]       -> Key finding/data point from article
+[SLIDE 5: POV]           -> Your take — opinion allowed
+[SLIDE 6: CTA]           -> Question that loops back to slide 1
 
-[REJECTION]
-Tidak bisa mengisi slide 1-4 dengan fakta nyata, berbeda, tanpa fabricate atau pad lebih dari satu slide? Output hanya:
-{{"error":"insufficient_source","reason":"<satu kalimat: apa yang missing>"}}
-Cari artikel lain. JANGAN carousel parsial atau dipotong.
+## SLIDE 1 - HOOK (emotional/engaging)
+- 1-2 sentences MAX
+- Emotional trigger: fear, greed, surprise, FOMO, relief, regret
+- NO facts yet (build curiosity)
+- Should make reader stop scrolling
+- Patterns:
+  - "Gue baru sadar selama ini [X]... ternyata [shocking twist]"
+  - "Kebanyakan orang nggak tau kalau [X]"
+  - "Kalau lo [habit umum], berhenti sekarang."
+- Last word/topic must anchor to article subject
 
-[STYLE]
-- Percakapan, Bahasa Indonesia casual, satu ide per kalimat, setiap kalimat diikuti \\n\\n. Setiap slide menambah fakta/sudut pandang baru — callback untuk escalate/close loop diperbolehkan, pengulangan datar TIDAK.
-- Bahasa: ID+EN mix. "Lo/gue/kita" max 1x per slide (PILIH salah satu, BUKAN dua-duanya).
-- Hindari klise drama kosong dan intensifier空虚 ("pasar gonjang-ganjing", "move mengejutkan", "tak terduga", "waktu yang akan menentukan", dan sejenisnya).
-- Dilarang: em dash (—), hashtag, bullet point, ALL CAPS, AI throat-clearing ("Sebagai kesimpulan", "Patut dicatat", "Pada akhirnya").
-- Sumber artikel bahasa Indonesia: pertahankan nama institusi/perusahaan/Pejabat dalam bentuk asli, tulis semua konten slide dalam Bahasa Indonesia.
-- Selalu ekspresikan angka dalam istilah awam di penyebutan pertama (contoh: "suku bunga naik dari 5,5% ke 6%" bukan "kenaikan 50bps") supaya slide berdiri sendiri tanpa perlu artikel lengkap."""
+## SLIDE 2 - SETUP (nyambung dari slide 1)
+- Opens with callback to slide 1's last word/topic
+- 2-3 sentences
+- Establishes: who, what, when, where
+- All facts from article
+- Pattern: "Jadi [article context]. [Article fact 1]. [Article fact 2]."
+
+## SLIDE 3 - COMPLICATION (escalation)
+- Opens connecting slide 2's ending
+- 2-3 sentences
+- Raises stakes: what's at risk, who's affected, what changes
+- Facts from article (numbers, quotes, events)
+- Pattern: "Tapi masalahnya [complication]. [Article stat]. [Article quote/observation]."
+
+## SLIDE 4 - INSIGHT (the "aha")
+- Opens connecting slide 3's tension
+- 2-3 sentences
+- The KEY takeaway — the data point or finding that changes everything
+- This is the "value" slide
+- Pattern: "Ternyata [article insight]. [Article number/quote]. Ini karena [article reasoning]."
+
+## SLIDE 5 - POV (personal opinion)
+- Opens connecting slide 4's insight
+- 2-4 sentences
+- Start with "POV gue:"
+- Your interpretation: agree/disagree, what it means for reader, what to watch
+- Connect to broader finance wisdom OK here
+- Pattern: "POV gue: [opinion]. [Reasoning]. Buat lo yang [reader profile], [action]."
+
+## SLIDE 6 - CTA (question, loops to slide 1)
+- Opens with callback to slide 1's hook theme
+- 1-2 sentences MAX
+- Question form
+- Should trigger comments
+- Patterns:
+  - "Lo masih [hook behavior dari slide 1]?"
+  - "Menurut lo [topic dari slide 1] gimana?"
+  - "Pernah ngalamin [hook situation] juga?"
+
+# STORYTELLING CHECKLIST (verify before output)
+- [ ] Slide 2's first sentence references slide 1's last word/topic
+- [ ] Slide 3 references slide 2's conclusion
+- [ ] Slide 4 references slide 3's tension
+- [ ] Slide 5 references slide 4's insight
+- [ ] Slide 6 references slide 1's hook explicitly
+- [ ] No "dead-end" slides — each flows into next
+
+# TONE & LENGTH
+- Bahasa Indonesia casual + English finance terms OK (e.g., "rally", "ATH", "allocation")
+- Use "lo/gue", contractions, short sentences
+- No corporate jargon, no emoji spam (max 1-2 per slide)
+- Numbers/stats: keep raw, don't round
+- Max 4 sentences per slide (slide 1: max 2)
+- Target: 200-400 chars/slide, ~1500-2400 chars total
+
+# OUTPUT FORMAT (JSON STRICT)
+
+{
+  "source": "[article title/URL]",
+  "niche": "finance",
+  "narrative_arc": "[1 sentence: story flow dari hook ke CTA]",
+  "slides": {
+    "slide_1": {
+      "type": "hook",
+      "title": "[optional, max 5 words]",
+      "content": "[1-2 kalimat emosional]"
+    },
+    "slide_2": {
+      "type": "setup",
+      "title": "[optional]",
+      "content": "[2-3 kalimat]",
+      "facts_used": ["[fact verbatim dari artikel]", "[fact 2]"]
+    },
+    "slide_3": {
+      "type": "complication",
+      "title": "[optional]",
+      "content": "[2-3 kalimat]",
+      "facts_used": ["..."]
+    },
+    "slide_4": {
+      "type": "insight",
+      "title": "[optional]",
+      "content": "[2-3 kalimat]",
+      "facts_used": ["..."]
+    },
+    "slide_5": {
+      "type": "pov",
+      "title": "[optional]",
+      "content": "[2-4 kalimat, mulai dengan POV gue:]",
+      "pov_marker": "POV"
+    },
+    "slide_6": {
+      "type": "cta",
+      "title": "[optional]",
+      "content": "[1-2 kalimat, bentuk pertanyaan]",
+      "loops_to_slide_1": "[elemen hook slide 1 yang di-reference]"
+    }
+  },
+  "verification": {
+    "all_facts_in_slides_1_4_from_article": true,
+    "external_facts_added": [],
+    "story_chain_complete": true,
+    "slide_6_loops_to_slide_1": true
+  }
+}
+
+# FINAL CHECK BEFORE DELIVERING
+1. All facts in slides 1-4 traceable to article
+2. Story flows slide 1->2->3->4->5->6
+3. Slide 6 references slide 1's hook
+4. POV only in slides 5-6
+5. Each slide <=4 sentences
+6. JSON valid"""
 
     fact_bank = extract_facts(article_content[:3000])
 
@@ -1369,15 +1499,10 @@ def add_smart_whitespace(content):
     return '\n\n'.join(restored)
 
 def validate_hook(hook):
-    """Validate that hook has substance (per v14 spec).
+    """Validate that hook has substance (per v16 spec).
 
-    New spec just requires: "The single most consequential, surprising,
-    or counterintuitive fact, number, or quote in the article."
-
-    Light validation:
-      - Must have at least 1 sentence
-      - Should reference article content (presence of a number/percent OR
-        a recognizable entity name OR a non-trivial length)
+    New spec says: HOOK is 1-2 sentences, emotional trigger,
+    NO facts yet, builds curiosity. Just check the hook has substance.
     """
     issues = []
 
@@ -1385,12 +1510,11 @@ def validate_hook(hook):
         issues.append("hook too short or empty")
         return False, issues
 
-    has_number = bool(re.search(r'\d', hook))
     word_count = len(hook.split())
 
-    # Very permissive: just check it's not a single word or empty
-    if word_count < 3:
-        issues.append("hook too short (<3 words)")
+    # Just check it's not a single word or empty
+    if word_count < 4:
+        issues.append("hook too short (<4 words)")
 
     return len(issues) == 0, issues
 
@@ -1404,27 +1528,28 @@ def count_sentences(text):
 def normalize_slide_sentences(slides_data):
     """Normalize slide sentence counts to fit per-slide bounds (no reject — auto-fix).
 
-    Per spec (v14, 21 Jun 2026) — different bounds per slide:
-      - slide_1 HOOK:        min 1, max 3
-      - slide_2 WHAT:        min 3, max 4
-      - slide_3 TENSION:     min 2, max 4
-      - slide_4 HUMAN/DATA:  min 2, max 4
-      - slide_5 UNRESOLVED:  min 2, max 3
-      - slide_6 CTA:         min 2, max 4
+    Per v16 spec (21 Jun 2026) — threads-finance-6slide reference:
+      - slide_1 HOOK:         min 1, max 2
+      - slide_2 SETUP:        min 2, max 3
+      - slide_3 COMPLICATION: min 2, max 3
+      - slide_4 INSIGHT:      min 2, max 3
+      - slide_5 POV:          min 2, max 4
+      - slide_6 CTA:          min 1, max 2
 
     Behavior:
       - Over max → trim to first N sentences (keep first, drop rest)
       - Under min → pass through, log warning (padding risks fabrication)
     Returns: (normalized_slides_data, list_of_changes)
     """
-    # Per-slide bounds (v15 — matches football spec with HOOK MIN 2)
+    # Per-slide bounds (v16 — matches threads-finance-6slide reference prompt)
+    # HOOK 1-2, SETUP 2-3, COMPLICATION 2-3, INSIGHT 2-3, POV 2-4, CTA 1-2
     bounds = {
-        1: (2, 3),   # HOOK
-        2: (3, 4),   # WHAT
-        3: (2, 4),   # TENSION
-        4: (2, 4),   # HUMAN
-        5: (2, 3),   # UNRESOLVED
-        6: (2, 4),   # CTA
+        1: (1, 2),   # HOOK (emotional, short)
+        2: (2, 3),   # SETUP
+        3: (2, 3),   # COMPLICATION
+        4: (2, 3),   # INSIGHT
+        5: (2, 4),   # POV
+        6: (1, 2),   # CTA (question form, short)
     }
 
     changes = []
@@ -1463,17 +1588,17 @@ def normalize_slide_sentences(slides_data):
 def validate_slide_sentences(slides_data):
     """Validate sentence counts per slide (per-slide bounds, no tolerance).
 
-    Per v15 spec (21 Jun 2026):
-      - slide_1 HOOK:        2-3 sentences
-      - slide_2 WHAT:        3-4 sentences
-      - slide_3 TENSION:     2-4 sentences
-      - slide_4 HUMAN:       2-4 sentences
-      - slide_5 UNRESOLVED:  2-3 sentences
-      - slide_6 CTA:         2-4 sentences
+    Per v16 spec (21 Jun 2026) — threads-finance-6slide reference:
+      - slide_1 HOOK:         1-2 sentences
+      - slide_2 SETUP:        2-3 sentences
+      - slide_3 COMPLICATION: 2-3 sentences
+      - slide_4 INSIGHT:      2-3 sentences
+      - slide_5 POV:          2-4 sentences
+      - slide_6 CTA:          1-2 sentences
     """
     bounds = {
-        1: (2, 3), 2: (3, 4), 3: (2, 4),
-        4: (2, 4), 5: (2, 3), 6: (2, 4),
+        1: (1, 2), 2: (2, 3), 3: (2, 3),
+        4: (2, 3), 5: (2, 4), 6: (1, 2),
     }
     issues = []
 
