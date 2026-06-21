@@ -1190,14 +1190,14 @@ def validate_slide_sentences(slides_data):
         slide = slides_data.get(f'slide_{i}', {})
         text = slide.get('content', '') if isinstance(slide, dict) else slide.get('hook', '')
         s_count = count_sentences(text)
-        if not (3 <= s_count <= 6):
-            issues.append(f"slide_{i}: {s_count} sentences (need 3-6)")
+        if not (3 <= s_count <= 5):
+            issues.append(f"slide_{i}: {s_count} sentences (need 3-5)")
     
     slide7 = slides_data.get('slide_7', {})
     text7 = slide7.get('content', '') if isinstance(slide7, dict) else slide7.get('hook', '')
     s7 = count_sentences(text7)
-    if not (2 <= s7 <= 8):
-        issues.append(f"slide_7: {s7} sentences (need 2-8)")
+    if not (2 <= s7 <= 5):
+        issues.append(f"slide_7: {s7} sentences (need 2-5)")
     
     return len(issues) == 0, issues
 
