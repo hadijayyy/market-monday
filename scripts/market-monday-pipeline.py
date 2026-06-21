@@ -19,7 +19,6 @@ Updated: 18 Jun 2026 — Optimized HTTP actions, error handling & PEP 8 complian
 import os
 import sys
 import json
-import time
 import re
 import html
 import requests
@@ -549,7 +548,8 @@ def is_fresh(pub_date_str, hours=24):
         now = datetime.now(timezone.utc)
         age = now - pub_date
         return age.total_seconds() < hours * 3600
-    except Exception:
+    except Exception as e:
+        log(f"Date parse error: {e}", "WARN")
         return True
 
 def score_candidate(article, posted, feedback):
@@ -889,11 +889,12 @@ def extract_json_from_content(content):
         json_str = re.sub(r',\s*]', ']', json_str)
         try:
             data = json.loads(json_str)
-        except Exception:
+        except Exception as e:
+            log(f"JSON repair failed: {e}", "WARN")
             return None
     
     normalized = {}
-    for i in range(1, 9):
+    for i in range(1, 8):
         key = f"slide_{i}"
         if key in data:
             val = data[key]
@@ -1181,20 +1182,29 @@ def validate_slide_sentences(slides_data):
     issues = []
     
     slide1 = slides_data.get('slide_1', {})
-    text1 = slide1.get('hook', '') if isinstance(slide1, dict) else slide1.get('content', '')
+    if isinstance(slide1, dict):
+        text1 = slide1.get('hook', '') or slide1.get('content', '')
+    else:
+        text1 = str(slide1)
     s1 = count_sentences(text1)
-    if not (2 <= s1 <= 7):
-        issues.append(f"slide_1: {s1} sentences (need 2-7)")
+    if not (2 <= s1 <= 3):
+        issues.append(f"slide_1: {s1} sentences (need 2-3)")
     
     for i in range(2, 7):
         slide = slides_data.get(f'slide_{i}', {})
-        text = slide.get('content', '') if isinstance(slide, dict) else slide.get('hook', '')
+        if isinstance(slide, dict):
+            text = slide.get('content', '') or slide.get('hook', '')
+        else:
+            text = str(slide)
         s_count = count_sentences(text)
         if not (3 <= s_count <= 5):
             issues.append(f"slide_{i}: {s_count} sentences (need 3-5)")
     
     slide7 = slides_data.get('slide_7', {})
-    text7 = slide7.get('content', '') if isinstance(slide7, dict) else slide7.get('hook', '')
+    if isinstance(slide7, dict):
+        text7 = slide7.get('content', '') or slide7.get('hook', '')
+    else:
+        text7 = str(slide7)
     s7 = count_sentences(text7)
     if not (2 <= s7 <= 5):
         issues.append(f"slide_7: {s7} sentences (need 2-5)")
@@ -1226,7 +1236,7 @@ def validate_grounding(slides_data, article_text):
     # Common numbers that appear in content
     COMMON_NUMBERS = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '100', '1000'}
     
-    for i in range(1, 9):
+    for i in range(1, 8):
         slide = slides_data.get(f"slide_{i}", {})
         hook = slide.get('hook', '') if isinstance(slide, dict) else ''
         content = slide.get('content', '') if isinstance(slide, dict) else ''
@@ -1261,7 +1271,7 @@ def validate_grounding(slides_data, article_text):
                 continue
             
             # Skip if it's a currency amount (Rp, RM, $, etc.)
-            if re.search(rf'{re.escape(num)}\\s*(?:juta|miliar|triliun|ribu|jt)', slide_text, re.IGNORECASE):
+            if re.search(rf'{re.escape(num)}\s*(?:juta|miliar|triliun|ribu|jt)', slide_text, re.IGNORECASE):
                 continue
             
             # Skip if number appears in a URL
@@ -1491,7 +1501,8 @@ def analytics_fetch_engagement(tok, post_id):
         for item in r.json().get("data", []):
             metrics[item["name"]] = item["values"][0]["value"]
         return metrics
-    except Exception:
+    except Exception as e:
+        log(f"Analytics insights fetch failed: {e}", "WARN")
         return {"likes": 0, "replies": 0, "reposts": 0, "views": 0, "quotes": 0}
 
 def analytics_calc_score(m):
@@ -1502,7 +1513,8 @@ def analytics_to_wib_hour(ts):
     """Convert strict ISO timestamp boundaries to localized hours integers."""
     try:
         return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(WIB).hour
-    except Exception:
+    except Exception as e:
+        log(f"WIB hour parse failed: {e}", "WARN")
         return 12
 
 def run_analytics():
