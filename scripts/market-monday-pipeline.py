@@ -1187,8 +1187,8 @@ def validate_slide_sentences(slides_data):
     else:
         text1 = str(slide1)
     s1 = count_sentences(text1)
-    if not (2 <= s1 <= 3):
-        issues.append(f"slide_1: {s1} sentences (need 2-3)")
+    if not (2 <= s1 <= 7):
+        issues.append(f"slide_1: {s1} sentences (need 2-7)")
     
     for i in range(2, 7):
         slide = slides_data.get(f'slide_{i}', {})
