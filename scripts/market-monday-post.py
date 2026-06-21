@@ -32,8 +32,12 @@ _HTTP = httpx.Client(timeout=8)
 atexit.register(_HTTP.close)
 
 def load_token():
-    data = json.loads(TOKEN_FILE.read_text())
-    return data["access_token"], str(data["user_id"])
+    try:
+        data = json.loads(TOKEN_FILE.read_text())
+        return data["access_token"], str(data["user_id"])
+    except (json.JSONDecodeError, KeyError, OSError) as e:
+        print(f"❌ Failed to load token from {TOKEN_FILE}: {e}", file=sys.stderr)
+        raise SystemExit(1) from e
 
 def create_container(uid, token, text, reply_to=None, image_url=None, max_retries=1):
     """Create a media container with retry on transient errors.
@@ -203,7 +207,10 @@ def post_thread(uid, token, slides, image_url=None):
             if last_period > 50:
                 text = trimmed[:last_period + 1]
             else:
-                text = trimmed.rstrip() + "…"
+                # Bug fix (v17.4): previous `trimmed.rstrip() + "…"` produced 501 chars
+                # (500 + 1 ellipsis) — Threads API still rejects. Now replace last char
+                # with ellipsis to stay at exactly 500.
+                text = trimmed[:-1].rstrip() + "…"
             print(f"   ✂️ Slide {slide_idx+1} char-trimmed to {len(text)} chars (final guard)", file=sys.stderr)
 
         # Carousel parent: root for all slides (fan-out, not chain)
@@ -240,7 +247,10 @@ def post_thread(uid, token, slides, image_url=None):
                 print(f"   🔄 Retrying slide {i+1}/{len(filtered)}...", file=sys.stderr)
                 cid = create_container(uid, token, text, reply_to, image_url if i == 0 else None)
                 pid = publish(uid, token, cid)
-                post_ids.append(pid)
+                # Bug fix (v17.4): append as tuple (slide_idx, pid) for consistency with
+                # initial-attempt path. Previously appended raw `pid`, causing TypeError
+                # in main() when sorting `post_ids` by slide_idx.
+                post_ids.append((slide_idx, pid))
                 print(f"   ✅ Slide {i+1}/{len(filtered)} retry succeeded: → {pid}", file=sys.stderr)
                 if i == 0:
                     root_pid = pid
@@ -253,9 +263,12 @@ def post_thread(uid, token, slides, image_url=None):
                         print(f"Post: https://www.threads.com/@ryanhadiii/post/{pid}")
             except Exception as retry_err:
                 print(f"   ❌ Slide {i+1}/{len(filtered)} retry also failed: {retry_err}", file=sys.stderr)
-                if root_pid is None and i > 0:
+                # Bug fix (v17.4): previously checked `i > 0`, which failed when root (i=0)
+                # failed twice — root_pid stayed None, and subsequent slides posted as their
+                # own roots instead of breaking. Now break if root_pid is None regardless of i.
+                if root_pid is None:
                     print(f"   🛑 Cannot continue — no root post to reply to.", file=sys.stderr)
-                    break
+                    return post_ids
                 print(f"   Continuing with remaining slides...", file=sys.stderr)
                 # Skip this slide but keep root_pid for the rest
             continue
@@ -278,10 +291,21 @@ def parse_slides(text):
 
 def verify_posts(uid, token, limit=15):
     """Check recent posts."""
-    r = _HTTP.get(f"{THREADS_API}/{uid}/threads",
-        params={"access_token": token, "fields": "id,text,timestamp", "limit": limit})
+    try:
+        r = _HTTP.get(f"{THREADS_API}/{uid}/threads",
+            params={"access_token": token, "fields": "id,text,timestamp", "limit": limit})
+        # Bug fix (v17.4): wrap r.json() in try/except — non-JSON responses (HTML error
+        # page, 502/503) previously crashed the verify command.
+        try:
+            data = r.json().get("data", [])
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"❌ Non-JSON response from Threads API: {e}", file=sys.stderr)
+            return []
+    except httpx.HTTPError as e:
+        print(f"❌ Network error during verify: {e}", file=sys.stderr)
+        return []
     results = []
-    for post in r.json().get("data", []):
+    for post in data:
         text = post.get("text", "")
         if text.strip():
             has_bare = bool(re.search(r'https?://[^\s\[\]]+', text))

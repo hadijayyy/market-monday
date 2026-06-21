@@ -741,6 +741,10 @@ def call_llm(system_prompt, user_prompt, model):
     if model not in ("MiniMax-M3", "mimo-v2.5", "minimax-m2.5", "minimax-m2.7", "deepseek-v4-flash"):
         payload.pop("reasoning_effort", None)
 
+    # Defensive: strip reasoning_content from assistant msgs (Mistral rejects extra fields, HTTP 422)
+    for _m in payload.get("messages", []):
+        _m.pop("reasoning_content", None)
+
     try:
         r = requests.post(api_url, headers=headers, json=payload, timeout=LLM_TIMEOUT, stream=True)
 
