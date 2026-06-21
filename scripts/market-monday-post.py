@@ -231,7 +231,7 @@ def post_thread(uid, token, slides, image_url=None):
                 if permalink:
                     print(f"Post: {permalink}")
                 else:
-                    print(f"Post: https://www.threads.com/@parkthebus.football/post/{pid}")
+                    print(f"Post: https://www.threads.com/@ryanhadiii/post/{pid}")
         except Exception as e:
             print(f"   ⚠️ Slide {slide_idx+1}/{len(filtered)} failed: {e}", file=sys.stderr)
             # RETRY: wait 5s and try once more before giving up
@@ -250,7 +250,7 @@ def post_thread(uid, token, slides, image_url=None):
                     if permalink:
                         print(f"Post: {permalink}")
                     else:
-                        print(f"Post: https://www.threads.com/@parkthebus.football/post/{pid}")
+                        print(f"Post: https://www.threads.com/@ryanhadiii/post/{pid}")
             except Exception as retry_err:
                 print(f"   ❌ Slide {i+1}/{len(filtered)} retry also failed: {retry_err}", file=sys.stderr)
                 if root_pid is None and i > 0:

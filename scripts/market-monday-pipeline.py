@@ -66,15 +66,12 @@ LLM_MODELS = ["mistral-large-latest", "MiniMax-M3"]
 DRY_RUN = False
 FORCE_MODEL = None
 # Threads account handle for CTA "Follow @{handle}". Edit if account changes.
-THREADS_HANDLE = "@parkthebus.football"
+THREADS_HANDLE = "@ryanhadiii"
 LLM_MAX_TOKENS = 16000  # bumped 10000→16000 — v15 prompt strict checks cause M3 over-planning, hits budget mid-thought
 LLM_TIMEOUT = 240  # bumped 180→240s — M3 fallback takes 3-4 min with longer thinking
 
 # SIMILARITY
 SIMILARITY_THRESHOLD = 0.35
-
-# THREADS
-THREADS_SCRIPT = SCRIPTS_DIR / "pressbox-direct-post.py"
 
 # WIB timezone
 WIB = timezone(timedelta(hours=7))
@@ -1536,11 +1533,11 @@ def format_slides(slides_data):
 # ─── THREADS POSTING ─────────────────────────────────────────────────────────
 
 def post_to_threads(staging_data):
-    """Post slides to Threads using Press Box direct-post.py."""
+    """Post slides to Threads using market-monday-post.py."""
     import subprocess
 
     if not THREADS_SCRIPT.exists():
-        log("[POST] Press Box direct-post.py not found - skipping auto-post", "WARN")
+        log("[POST] market-monday-post.py not found - skipping auto-post", "WARN")
         return False, None, None
 
     md_content = ""
