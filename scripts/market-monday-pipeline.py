@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
+from email.utils import parsedate_to_datetime
 
 # Global import newspaper3k
 try:
@@ -97,211 +98,161 @@ BENCHMARK_SOURCES = [
     {"name": "BBC Business", "url": "https://feeds.bbci.co.uk/news/business/rss.xml"},
 ]
 
-# ─── SCORING KEYWORDS ────────────────────────────────────────────────────────
-IMPACT_CRASH = {
-    "crash", "crisis", "recession", "collapse", "plunge", "default",
-    "bankruptcy", "layoff", "layoffs", "unemployment", "emergency",
-    "panic", "meltdown", "turmoil", "slump", "downturn", "insolvency", "implosion",
-    "anjlok", "ambruk", "jatuh", "gagal", "bangkrut", "phk", "resesi",
-    "krisis", "darurat", "panik", "merosot", "menurun"
+# ─── KEYWORD & SCORING SYSTEM (v17 — 21 Jun 2026, per user spec) ─────────────
+# Scope: Makro Indonesia + Saham/IHSG + Crypto/Web3
+# Skor 0-100, threshold ≥60 untuk masuk pipeline
+
+# === 1. INCLUDE KEYWORDS ===
+# Direct substring match (case-insensitive) — keywords chosen to be unambiguous
+
+INCLUDE_KEYWORDS = {
+    # Makro Indonesia (BI, APBN, kurs, dll)
+    "makro": [
+        "rupiah", "nilai tukar", "kurs", "bi rate", "bi-rate", "suku bunga acuan",
+        "bank indonesia", "inflasi", "deflasi", "pdb", "pertumbuhan ekonomi",
+        "neraca dagang", "neraca perdagangan", "ekspor impor", "defisit anggaran",
+        "apbn", "cadangan devisa", "utang luar negeri", "pmi manufaktur",
+        "indeks keyakinan konsumen", "bps", "kemenkeu", "sri mulyani",
+        "perry warjiyo", "capital outflow", "capital inflow", "yield obligasi",
+        "sbn", "surat utang negara", "lelang sun", "credit rating", "moody's", "fitch", "s&p",
+    ],
+    # Saham / IHSG / Emiten
+    "saham": [
+        "ihsg", "indeks harga saham gabungan", "bei", "bursa efek indonesia",
+        "saham blue chip", "market cap", "kapitalisasi pasar", "ipo",
+        "laporan keuangan", "kuartal", "dividen", "right issue", "buyback",
+        "saham gorengan", "foreign outflow", "foreign inflow", "net sell", "net buy",
+        "lq45", "idx30", "sektor perbankan", "sektor energi", "sektor consumer",
+        "emiten", "suspensi saham", "ara", "arb", "auto reject", "capital gain",
+        "analis merekomendasikan", "target harga", "rating saham", "downgrade", "upgrade",
+    ],
+    # Crypto / Web3
+    "crypto": [
+        "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "altcoin", "stablecoin",
+        "usdt", "usdc", "market cap crypto", "exchange crypto", "binance", "indodax",
+        "bappebti", "regulasi kripto", "etf bitcoin", "etf crypto", "halving",
+        "defi", "nft", "staking", "airdrop", "token listing", "whale movement",
+        "on-chain data", "smart contract", "web3", "blockchain", "memecoin",
+        "likuidasi", "leverage", "funding rate", "perpetual futures", "cex", "dex",
+    ],
+    # Cross-cutting (global market, geopolitik, commodity)
+    "cross": [
+        "the fed", "suku bunga the fed", "fomc", "jerome powell", "resesi",
+        "volatilitas pasar", "sentimen pasar", "geopolitik", "harga minyak",
+        "harga emas", "perang dagang", "tarif", "china-as", "krisis ekonomi",
+    ],
 }
 
-IMPACT_SURGE = {
-    "surge", "rally", "soar", "boom", "breakthrough", "record",
-    "historic", "milestone", "all-time high", "first time", "skyrocket",
-    "outperform", "beat expectations", "strongest",
-    "kenaikan", "meningkat", "melambung", "meroket", "menembus",
-    "tembus", "rekor", "tertinggi", "terbesar", "pertama", "berhasil",
-    "positif", "optimistis", "pulih", "rebound"
+# === 2. EXCLUDE KEYWORDS ===
+# Strict: substring match → hard reject (-1)
+
+EXCLUDE_KEYWORDS = {
+    "noise": [
+        "prediksi zodiak", "ramalan", "gosip", "artis", "selebriti",
+        "giveaway", "kuis berhadiah", "undian", "kontes foto",
+    ],
+    "non_redaksional": [
+        "advertorial", "press release", "lowongan kerja",
+        "event promosi", "sponsored content",
+    ],
 }
 
-IMPACT_NEGATIVE = {
-    "warning", "downgrade", "cut", "reduce", "slowdown", "weaken",
-    "decline", "drop", "fall", "tumble", "sink", "miss", "miss expectations",
-    "peringatan", "potong", "kurang", "perlambatan", "melemah",
-    "penurunan", "merosot", "gagal", "meleset"
-}
+# Ambiguous excludes — context-window check required (might be finance OR non-finance)
+# Example: "saham mata" (non-finance) vs "saham BCA" (finance)
+# Only flag if NO include keyword within ±100 chars
+AMBIGUOUS_EXCLUDES = ["saham", "token", "blok", "emas"]
 
-URGENCY_HIGH = {
-    "breaking", "just in", "alert", "emergency", "urgent", "flash",
-    "terbaru", "baru", "mendesak", "darurat", "segera", "breaking news"
-}
+# === 3. SOURCE TIER (SUMBER KREDIBILITAS) ===
 
-URGENCY_MEDIUM = {
-    "today", "this week", "imminent", "announce", "reveals", "expects",
-    "hari ini", "minggu ini", "akan datang", "mengumumkan", "menguak",
-    "memprediksi", "estimasi", "proyeksi"
-}
+SOURCE_TIER_1 = ["kontan", "bisnis.com", "cnbc indonesia", "katadata", "investor daily"]
+SOURCE_TIER_2 = ["detik finance", "idx channel", "kumparan", "tempo", "republika", "okezone"]
 
-INDO_HIGH = {
-    "rupiah", "idr", "bi rate", "bank indonesia", "suku bunga",
-    "ihsg", "idx", "ojk", "beban", "emiten", "saham indonesia",
-    "jakarta", "indonesia", "pemerintah", "kementerian"
-}
+# === 4. HELPER FUNCTIONS ===
 
-INDO_MEDIUM = {
-    "komoditas", "batu bara", "nikel", "cpo", "kelapa sawit",
-    "tembaga", "emas", "minyak mentah", "lng", "palm oil"
-}
+def compute_age_hours(pub_date_str):
+    """Compute article age in hours from publish timestamp."""
+    if not pub_date_str:
+        return 999
+    try:
+        pub_date = parsedate_to_datetime(pub_date_str)
+        now = datetime.now(timezone.utc)
+        return (now - pub_date).total_seconds() / 3600
+    except Exception:
+        return 999
 
-INDO_LOW = {
-    "asia", "asean", "singapore", "malaysia", "thailand", "vietnam",
-    "philippines", "china", "jepang", "korea"
-}
+def source_tier(source):
+    """Return tier (1/2/0) for source name."""
+    s = (source or "").lower()
+    for t in SOURCE_TIER_1:
+        if t in s:
+            return 1
+    for t in SOURCE_TIER_2:
+        if t in s:
+            return 2
+    return 0
 
-BORING_KEYWORDS = {
-    "quarterly report", "earnings preview", "market open", "market close",
-    "trading update", "dividend announcement", "annual report",
-    "regulatory filing", "proxy statement"
-}
+def check_include_keywords(text):
+    """Returns (matched_count, categories_set). Case-insensitive.
+    Short tokens (≤4 chars) use word-boundary regex to avoid substring false
+    positives (e.g. 'ara' inside 'Barat', 'ipo' inside any word).
+    """
+    import re as _re
+    text_lower = text.lower()
+    matched = set()
+    categories = set()
+    for cat, keywords in INCLUDE_KEYWORDS.items():
+        for kw in keywords:
+            kw_lower = kw.lower()
+            if len(kw_lower) <= 4:
+                # Short token — require word boundary
+                pattern = r"\b" + _re.escape(kw_lower) + r"\b"
+                if _re.search(pattern, text_lower):
+                    matched.add(kw)
+                    categories.add(cat)
+            else:
+                if kw_lower in text_lower:
+                    matched.add(kw)
+                    categories.add(cat)
+    return len(matched), categories
 
-OPINION_KEYWORDS = {
-    "opinion", "analysis", "column", "editorial", "commentary",
-    "perspective", "viewpoint", "says analyst", "expert says"
-}
+def check_exclude_keywords(text):
+    """Check strict excludes + ambiguous excludes with context window.
+    Returns matched exclude keyword (str) or None.
+    """
+    text_lower = text.lower()
+    # Strict excludes — direct match
+    for cat, keywords in EXCLUDE_KEYWORDS.items():
+        for kw in keywords:
+            if kw.lower() in text_lower:
+                return kw
+    # Ambiguous excludes — only flag if NO include keyword nearby (±100 chars)
+    include_kws_flat = [kw.lower() for kws in INCLUDE_KEYWORDS.values() for kw in kws]
+    context_window = 100
+    for kw in AMBIGUOUS_EXCLUDES:
+        if kw in text_lower:
+            idx = text_lower.find(kw)
+            context = text_lower[max(0, idx-context_window):idx+len(kw)+context_window]
+            has_include_nearby = any(inc in context for inc in include_kws_flat)
+            if not has_include_nearby:
+                return f"{kw} (no finance context)"
+    return None
 
-VIDEO_KEYWORDS = {
-    "video", "watch", "nonton", "tonton", "footage", "clip",
-    "livestream", "live streaming", "replay"
-}
-
-PROMO_KEYWORDS = {
-    "promo", "diskon", "cashback", "gratis", "free", "hadiah", "reward",
-    "pameran", "expo", "fair", "festival", "event",
-    "kunjungi", "datang ke", "hadir di", "acara",
-    "berlangsung", "digelar", "diselenggarakan",
-    "tiket", "registrasi", "daftar sekarang", "booking",
-    "limited", "terbatas", "kuota", "slot",
-    "voucher", "kupon", "bonus",
-}
-
-# Finance-Specific Sensitive Keywords (Threads/Meta Policy)
-# Based on actual Threads community guidelines and Meta policies
-# These keywords are associated with content that violates financial regulations
-SENSITIVE_KEYWORDS = {
-    # 1. FINANCIAL SCAMS & FRAUD (HIGH RISK)
-    # These keywords are associated with content that can cause financial harm
-    "jaminan untung", "pasti untung", "tanpa risiko",
-    "kaya mendadak", "penghasilan pasif 100%", "gandakan uang",
-    "untung 100% per hari", "tidak akan rugi", "rahasia sukses",
-    "kesempatan eksklusif",
-    
-    "guaranteed returns", "risk-free investment", "get rich quick",
-    "passive income 100%", "double your money", "100% profit daily",
-    "no risk", "can't lose", "secret formula", "exclusive opportunity",
-    
-    # 2. UNREGULATED FINANCIAL SERVICES (MEDIUM RISK)
-    # These keywords violate financial regulations
-    "binary option", "sinyal forex", "pompa kripto",
-    "tips orang dalam", "tips saham dijamin", "leverage 100x",
-    "tanpa verifikasi", "perdagangan anonim", "investasi lepas pantai",
-    "return bebas pajak",
-    
-    "binary options", "forex signals", "crypto pump",
-    "insider tips", "stock tips guaranteed", "100x leverage",
-    "no verification needed", "anonymous trading", "offshore investment",
-    "tax-free returns",
-    
-    # 3. DEBT & LENDING SCAMS (MEDIUM RISK)
-    # These keywords are associated with predatory lending
-    "pinjaman instan", "tanpa cek kredit", "uang tunai darurat",
-    "pinjaman gaji", "penarikan tunai", "konsolidasi hutang scam",
-    "perbaikan kredit", "hindari kebangkrutan", "kebebasan keuangan cepat",
-    "bebas hutang cepat",
-    
-    "instant loan", "no credit check", "emergency cash",
-    "payday loan", "cash advance", "debt consolidation scam",
-    "credit repair", "bankruptcy avoidance", "financial freedom fast",
-    "debt-free quick",
-    
-    # 4. MARKET MANIPULATION (HIGH RISK)
-    # These keywords are associated with market manipulation schemes
-    "pump and dump", "pompa dan buang",
-    "market manipulation", "manipulasi pasar",
-    "insider trading", "dagang orang dalam",
-    
-    "pump and dump", "market manipulation", "insider trading",
-    "wash trading", "front running", "spoofing",
-    
-    # 5. PREDATORY FINANCIAL SERVICES (MEDIUM RISK)
-    # These keywords are associated with predatory lending
-    "pinjaman ilegal", "rentenir", "lintah darat",
-    "debt collector kasar", "penagih hutang kasar",
-    "debt collector pukul", "debt collector ancam",
-    "pinjaman online ilegal", "pinjol ilegal",
-    "predatory lending", "pinjaman predatori",
-    "skyrocketing interest", "bunga mencekik",
-}
-
-VIRAL_FACTORS = {
-    "outrage_money": ["price", "cost", "debt", "money", "tax", "billion", "trillion", "rp", "harga", "biaya", "utang", "pajak"],
-    "human_story": ["worker", "family", "household", "consumer", "employee", "pekerja", "keluarga", "rumah tangga", "konsumen"],
-    "controversy": ["ban", "scandal", "fraud", "corruption", "protest", "korupsi", "skandal", "penipuan"],
-    "record_milestone": ["record", "history", "milestone", "first ever", "highest", "terbesar", "tertinggi", "pertama"],
-    "geopolitical": ["war", "conflict", "sanction", "tariff", "ban", "perang", "konflik", "sanksi"]
-}
-
-# Controversy / Drama / Clickbait keywords — boost score
-CONTROVERSY_KEYWORDS = {
-    "PHK", "PHK massal", "pemutusan hubungan kerja", "dirumahkan",
-    "bangkrut", "gulung tikar", "kolaps", "default", "gagal bayar",
-    "skandal", "korupsi", "suap", "gratifikasi", "nepotisme",
-    "manipulasi", "kecurangan", "penipuan", "fraud",
-    "protes", "demo", "unjuk rasa", "buruh mogok",
-    "bocor", "bocoran", "kebocoran", "temuan",
-    "kontroversi", "polemik", "heboh", "ramai",
-    "viral", "terkenal", "famous",
-    "sengketa", "gugatan", "class action",
-    "merugikan", "kerugian", "rugi", "merugi",
-}
-
-DRAMA_KEYWORDS = {
-    "tiba-tiba", "mendadak", "dikagetkan", "mengejutkan", "terkejut",
-    "miris", "menyedihkan", "kasihan", "prihatin", "memprihatinkan",
-    "drama", "kisah", "cerita", "pengakuan", "gestur",
-    "gebrakan", "kejutan", "blunder", "skandal",
-    "berani", "bantah", "tanggapi", "buka suara", "angkat bicara",
-    "tuding", "tuduhan", "salahkan", "kritik", "cam",
-    "makin", "semakin", "terus", "banjir", "membanjiri",
-    "muncul", "terungkap", "terbongkar", "terkuak",
-    "larang", "hentikan", "cabut", "batalkan",
-    "dilarang", "ditangkap", "diamankan", "dibekukan",
-    "anjlok", "merosot", "jatuh", "ambruk", "runtuh",
-    "terpuruk", "terperosok", "gulung tikar", "bangkrut",
-    "phk", "dirumahkan", "hentikan operasi",
-    "gigit", "was-was", "cemas", "khawatir",
-}
-
-CLICKBAIT_KEYWORDS = {
-    "bikin iri", "bikin penasaran", "ternyata", "rahasia",
-    "mengungkap", "mengintip", "bongkar", "sorot",
-    "viral", "heboh", "dibahas", "ramai diperbincangkan",
-    "beredar", "beredar luas", "masif", "viral di media sosial",
-    "terkenal", "famous", "populer",
-    "tak terduga", "tak disangka", "di luar dugaan",
-    "mengejutkan", "mencengangkan", "luar biasa",
-    "parah", "mengerikan", "ngeri", "mencengangkan",
-    "sensasional", "kontroversial", "penuh drama",
-    "terungkap", "terbongkar", "terkuak",
-    "muncul", "mencuat", "meledak",
-    "langsung", "tiba-tiba", "mendadak", "dikagetkan",
-    "rahasia", "tersembunyi", "tertutup",
-    "paling", "ter", "sekali", "banget",
-}
-
-TOPIC_PATTERNS = {
-    "inflasi": ["inflasi", "inflation", "harga", "price", "cpi", "deflasi"],
-    "suku_bunga": ["suku bunga", "interest rate", "bi rate", "rate hike", "rate cut", "moneter"],
-    "global_market": ["wall street", "saham", "stock", "ihsg", "idx", "rally", "crash", "bear", "bull"],
-    "currency": ["rupiah", "dollar", "yen", "eur", "forex", "nilai tukar", "exchange rate"],
-    "komoditas": ["minyak", "oil", "emas", "gold", "batu bara", "coal", "commodity"],
-    "property": ["properti", "property", "rumah", "apartemen", "kpr", "real estate"],
-    "tech_biz": ["ai", "tech", "startup", "digital", "fintech", "e-commerce"],
-    "kebijakan": ["pajak", "tax", "regulasi", "regulation", "kebijakan", "policy", "bi", "ojk"],
-    "karir": ["karir", "career", "gaji", "salary", "phk", "layoff", "lowongan", "job"],
-    "energi": ["energi", "energy", "listrik", "pln", "bbm", "subsidi"],
-    "global_event": ["perang", "war", "konflik", "conflict", "sanction", "g7", "g20", "imf"],
-}
+def has_specific_data(text):
+    """Detect specific numbers (percentages, prices, index levels). Returns bool."""
+    patterns = [
+        r'\d+\.?\d*\s*(%|persen|percent)',         # percentages
+        r'rp\s*\d+[\d.,]*',                         # Rp amounts
+        r'\$\s*\d+[\d.,]*',                         # USD amounts
+        r'us\$\s*\d+',                              # US$ prefix
+        r'\d+\.?\d*\s*(poin|points|bps)',          # basis points
+        r'(ihsg|idx|nikkei|nasdaq|dow|s&p|lq45|idx30)\s*[:\s\-]*\d',  # index levels
+        r'\d{3,}\s*(triliun|miliar|juta|rb|tn|mn)',  # currency amounts
+        r'(naik|turun)\s*\d+\.?\d*\s*%',           # movement percentages
+    ]
+    for p in patterns:
+        if re.search(p, text, re.IGNORECASE):
+            return True
+    return False
 
 # ─── HELPER FUNCTIONS ────────────────────────────────────────────────────────
 
@@ -400,55 +351,15 @@ def load_feedback():
     return feedback
 
 def extract_topics_from_title(title):
-    """Extract topics from article title for feedback matching."""
-    title_lower = title.lower()
-    topics = []
-    for topic, patterns in TOPIC_PATTERNS.items():
-        for pattern in patterns:
-            if pattern in title_lower:
-                topics.append(topic)
-                break
-    return topics if topics else ["general"]
+    """DEPRECATED in v17 — kept as stub for analytics backward compat."""
+    return ["general"]
 
 def apply_topic_boost(score, title, feedback):
-    """Apply topic boost from analytics feedback."""
-    if not feedback or "topic_boosts" not in feedback:
-        return score
-
-    topics = extract_topics_from_title(title)
-    total_boost = 0
-
-    for topic in topics:
-        if topic in feedback["topic_boosts"]:
-            boost_pct = feedback["topic_boosts"][topic].get("boost_pct", 0)
-            boost = min(boost_pct / 2, 50)
-            total_boost += boost
-
-    return score + total_boost
+    """DEPRECATED in v17 — topic/time boosts removed from scoring formula."""
+    return score
 
 def apply_time_boost(score, feedback):
-    """Apply time-of-day boost from analytics feedback."""
-    if not feedback or "time_boosts" not in feedback:
-        return score
-
-    current_hour = datetime.now().hour
-
-    if 6 <= current_hour < 10:
-        slot = "pagi (06-10)"
-    elif 10 <= current_hour < 14:
-        slot = "siang (10-14)"
-    elif 14 <= current_hour < 18:
-        slot = "sore (14-18)"
-    elif 18 <= current_hour < 22:
-        slot = "malam (18-22)"
-    else:
-        slot = "dini hari (22-06)"
-
-    if slot in feedback["time_boosts"]:
-        boost_pct = feedback["time_boosts"][slot].get("boost_pct", 0)
-        boost = min(boost_pct / 2, 30)
-        return score + boost
-
+    """DEPRECATED in v17 — topic/time boosts removed from scoring formula."""
     return score
 
 # ─── IMAGE EXTRACTION ────────────────────────────────────────────────────────
@@ -552,7 +463,6 @@ def is_fresh(pub_date_str, hours=24):
     if not pub_date_str:
         return True
     try:
-        from email.utils import parsedate_to_datetime
         pub_date = parsedate_to_datetime(pub_date_str)
         now = datetime.now(timezone.utc)
         age = now - pub_date
@@ -562,186 +472,82 @@ def is_fresh(pub_date_str, hours=24):
         return True
 
 def score_candidate(article, posted, feedback):
-    """Score article with 7-layer scoring system."""
-    title = article["title"].lower()
-    desc = article["description"].lower()
+    """Score article 0-100 per v17 spec (Makro/Saham/Crypto pipeline).
+
+    Components:
+      1. Keyword Match  : +8 pts per unique include keyword (max 5 = 40 pts)
+      2. Category Relev : 20 (Makro/Saham/Crypto) / 10 (cross only) / 0 (none)
+      3. Recency        : 15 (<6h) / 10 (6-24h) / 5 (24-48h) / 0 (>48h)
+      4. Data/Angka     : 15 (specific: %, Rp, index level) / 7 (vague digits) / 0
+      5. Sumber Tier    : 10 (Tier 1) / 5 (Tier 2) / 0 (unknown)
+      Penalti           : -1 hard reject if exclude keyword matched
+
+    Returns:
+      -1   → hard reject (posted URL or exclude match)
+      0-100 → score (threshold ≥60 untuk pipeline)
+    """
+    title = article.get("title", "")
+    desc = article.get("description", "")
     combined = f"{title} {desc}"
 
-    if article["url"] in posted:
-        return -1000
+    # Hard reject: already posted
+    if article.get("url") in posted:
+        return -1
 
-    if not is_fresh(article.get("published", ""), hours=24):
-        return -500
+    # Hard reject: exclude keyword match (strict OR ambiguous w/o finance context)
+    exclude_kw = check_exclude_keywords(combined)
+    if exclude_kw:
+        log(f"[SCORING] ❌ EXCLUDE matched ({exclude_kw}): {title[:60]}...", "WARN")
+        return -1
 
-    # RETAIL/PROMO BLACKLIST (21 Jun 2026) — skip retail shopping articles
-    # "harga" + "Bank Mega" in retail context (e.g. Transmart) shouldn't pass economic gate
-    RETAIL_KEYWORDS = [
-        # Specific retailers
-        "transmart", "indomaret", "alfamart", "hypermart", "carrefour", "lotte",
-        "matahari", "ramayana", "giant", "hero supermarket", "hypermart",
-        # Retail sale events
-        "full day sale", "midnight sale", "banting harga", "cuci gudang",
-        "flash sale", "diskon besar", "mega sale", "year end sale",
-        # Consumer goods (non-financial)
-        "alat masak", "panci", "kompor", "setrika", "blender", "mixer",
-        "sepeda", "sepatu", "tas", "baju", "fashion", "skincare", "kosmetik",
-        # General retail
-        "belanja online", "e-commerce", "tokopedia", "shopee", "lazada", "bukalapak",
-    ]
-    has_retail = any(kw in combined for kw in RETAIL_KEYWORDS)
-    if has_retail:
-        return -200  # Skip retail entirely — not finance niche
+    # 1. Keyword Match (max 40 pts)
+    matched_count, categories = check_include_keywords(combined)
+    keyword_pts = min(matched_count, 5) * 8
 
-    ECONOMIC_KEYWORDS = [
-        "harga", "saham", "ihsg", "idx", "rupiah", "dollar", "bi rate", "suku bunga",
-        "inflasi", "ekonomi", "pasar", "investasi", "komoditas", "cpo", "sawit",
-        "pertambangan", "energi", "listrik", "bbm", "pertamax", "solar", "industri",
-        "manufaktur", "ekspor", "impor", "neraca", "defisit", "surplus", "utang",
-        "kredit", "pinjaman", "bank", "ojk", "emiten", "dividen", "laba", "rugi",
-        "phk", "pekerja", "gaji", "upah", "tunjangan", "perpajakan", "pajak",
-        "reksadana", "obligasi", "deposito", "asuransi", "properti", "rumah", "kpr",
-        "kripto", "bitcoin", "ethereum", "blockchain", "startup", "fintech", "digital",
-        "pemerintah", "kementerian", "regulasi", "kebijakan", "apbn", "apbd",
-        "cadangan devisa", "balance of payment", "gdp", "pdb", "pertumbuhan",
-        "resesi", "stagnasi", "perlambatan", "pemulihan", "rebound", "rally",
-        "anomali", "manipulasi", "korupsi", "skandal", "penipuan", "gelap"
-    ]
-    
-    has_economic_keyword = any(kw in combined for kw in ECONOMIC_KEYWORDS)
-    if not has_economic_keyword:
-        return -200
+    # 2. Category Relevance (max 20 pts)
+    if categories & {"makro", "saham", "crypto"}:
+        cat_pts = 20
+    elif categories & {"cross"}:
+        cat_pts = 10
+    else:
+        cat_pts = 0
 
-    # SARA & Sensitive content — HEAVY PENALTY (skip entirely)
-    has_sensitive = any(kw.lower() in combined for kw in SENSITIVE_KEYWORDS)
-    if has_sensitive:
-        log(f"[SCORING] ❌ SENSITIVE content detected: {article['title'][:60]}...", "WARN")
-        return -300
+    # 3. Recency (max 15 pts)
+    age_h = compute_age_hours(article.get("published", ""))
+    if age_h < 6:
+        recency_pts = 15
+    elif age_h < 24:
+        recency_pts = 10
+    elif age_h < 48:
+        recency_pts = 5
+    else:
+        recency_pts = 0
 
-    score = 0
-    matched_keywords = set()
+    # 4. Data/Angka Konkret (max 15 pts)
+    if has_specific_data(combined):
+        data_pts = 15
+    elif re.search(r'\d+', combined):
+        data_pts = 7
+    else:
+        data_pts = 0
 
-    for kw in IMPACT_CRASH:
-        if kw in combined and kw not in matched_keywords:
-            score += 30
-            matched_keywords.add(kw)
-            break
+    # 5. Sumber Kredibilitas (max 10 pts)
+    tier = source_tier(article.get("source", ""))
+    if tier == 1:
+        source_pts = 10
+    elif tier == 2:
+        source_pts = 5
+    else:
+        source_pts = 0
 
-    for kw in IMPACT_SURGE:
-        if kw in combined and kw not in matched_keywords:
-            score += 25
-            matched_keywords.add(kw)
-            break
-
-    for kw in IMPACT_NEGATIVE:
-        if kw in combined and kw not in matched_keywords:
-            score += 20
-            matched_keywords.add(kw)
-            break
-
-    for kw in URGENCY_HIGH:
-        if kw in combined and kw not in matched_keywords:
-            score += 25
-            matched_keywords.add(kw)
-            break
-
-    for kw in URGENCY_MEDIUM:
-        if kw in combined and kw not in matched_keywords:
-            score += 15
-            matched_keywords.add(kw)
-            break
-
-    for kw in INDO_HIGH:
-        if kw in combined and kw not in matched_keywords:
-            score += 40
-            matched_keywords.add(kw)
-            break
-
-    for kw in INDO_MEDIUM:
-        if kw in combined and kw not in matched_keywords:
-            score += 25
-            matched_keywords.add(kw)
-            break
-
-    for kw in INDO_LOW:
-        if kw in combined and kw not in matched_keywords:
-            score += 15
-            matched_keywords.add(kw)
-            break
-
-    for kw in BORING_KEYWORDS:
-        if kw in combined and kw not in matched_keywords:
-            score -= 15
-            matched_keywords.add(kw)
-            break
-
-    for kw in OPINION_KEYWORDS:
-        if kw in combined and kw not in matched_keywords:
-            score -= 20
-            matched_keywords.add(kw)
-            break
-
-    for kw in VIDEO_KEYWORDS:
-        if kw in title and kw not in matched_keywords:
-            score -= 100
-            matched_keywords.add(kw)
-            break
-
-    for kw in PROMO_KEYWORDS:
-        if kw in combined and kw not in matched_keywords:
-            score -= 50
-            matched_keywords.add(kw)
-            break
-
-    # Controversy boost
-    for kw in CONTROVERSY_KEYWORDS:
-        if kw.lower() in combined and kw.lower() not in matched_keywords:
-            score += 20
-            matched_keywords.add(kw.lower())
-            break
-
-    # Drama boost
-    for kw in DRAMA_KEYWORDS:
-        if kw.lower() in combined and kw.lower() not in matched_keywords:
-            score += 15
-            matched_keywords.add(kw.lower())
-            break
-
-    # Clickbait boost
-    for kw in CLICKBAIT_KEYWORDS:
-        if kw.lower() in combined and kw.lower() not in matched_keywords:
-            score += 10
-            matched_keywords.add(kw.lower())
-            break
-
-    viral_count = 0
-    for factor, keywords in VIRAL_FACTORS.items():
-        for kw in keywords:
-            if kw in combined:
-                viral_count += 1
-                score += 10
-                break
-
-    if viral_count >= 3:
-        score += 50
-
-    words = article["title"].split()
-    if len(words) <= 8:
-        score += 15
-    elif len(words) > 15:
-        score -= 10
-
-    if re.search(r'\d+', article["title"]):
-        score += 10
-
-    score = apply_topic_boost(score, article["title"], feedback)
-    score = apply_time_boost(score, feedback)
-
-    return score
+    total = keyword_pts + cat_pts + recency_pts + data_pts + source_pts
+    return total
 
 def select_best_candidate(articles, posted, feedback, posted_titles=None, top_n=1):
-    """Select top N articles by score, with feedback boosts + title dedup."""
+    """Select top N articles by score, with title dedup. v17 threshold: ≥60."""
     scored = []
     skipped_similar = 0
+    skipped_below_threshold = 0
 
     for article in articles:
         if posted_titles and is_similar(article["title"], posted_titles):
@@ -749,11 +555,15 @@ def select_best_candidate(articles, posted, feedback, posted_titles=None, top_n=
             continue
 
         score = score_candidate(article, posted, feedback)
-        if score > 0:
+        if score >= 60:  # v17 threshold (was: > 0)
             scored.append((score, article))
+        elif score >= 0:
+            skipped_below_threshold += 1
 
     if skipped_similar > 0:
         log(f"[DEDUP] Skipped {skipped_similar} similar titles")
+    if skipped_below_threshold > 0:
+        log(f"[SCORING] {skipped_below_threshold} articles below threshold (score <60)")
 
     if not scored:
         return []
@@ -1200,15 +1010,20 @@ You are a senior Threads content writer for the finance niche. Your job: turn ON
 [SLIDE 5: POV]           -> Your take — opinion allowed
 [SLIDE 6: CTA]           -> Question that loops back to slide 1
 
-## SLIDE 1 - HOOK (emotional/engaging)
-- 1-2 sentences MAX
+## SLIDE 1 - HOOK (emotional/engaging, MUST be 2-3 sentences)
+- WAJIB 2-3 kalimat (bukan 1, bukan 4+). Substantif, bukan cuma 1 pertanyaan pendek.
 - Emotional trigger: fear, greed, surprise, FOMO, relief, regret
 - NO facts yet (build curiosity)
 - Should make reader stop scrolling
-- Patterns:
-  - "Gue baru sadar selama ini [X]... ternyata [shocking twist]"
-  - "Kebanyakan orang nggak tau kalau [X]"
-  - "Kalau lo [habit umum], berhenti sekarang."
+- Patterns (multi-sentence):
+  - "Gue baru sadar selama ini [X]. [shocking twist]. [rhetorical question]"
+  - "Kebanyakan orang nggak tau kalau [X]. Padahal tiap hari [Y] kejadian."
+  - "Kalau lo [habit umum], berhenti sekarang. Lo bisa kena [Z]."
+- CONTOH HOOK YANG BENAR (2 kalimat):
+  "Lo pernah denger dividen? Tiap tahun, perusahaan bagi-bagi 'uang gratis' ke pemegang saham."
+  "Uang lo raib dalam 1 jam? Padahal sistem udah dirancang buat nahan transaksi."
+- CONTOH HOOK YANG SALAH (terlalu pendek, JANGAN):
+  "Uang Gratis?" (1 kalimat saja, tidak cukup)
 - Last word/topic must anchor to article subject
 
 ## SLIDE 2 - SETUP (nyambung dari slide 1)
@@ -1499,10 +1314,12 @@ def add_smart_whitespace(content):
     return '\n\n'.join(restored)
 
 def validate_hook(hook):
-    """Validate that hook has substance (per v16 spec).
+    """Validate that hook has substance (per v16.1 spec — HOOK tightened to 2-3 sent).
 
-    New spec says: HOOK is 1-2 sentences, emotional trigger,
-    NO facts yet, builds curiosity. Just check the hook has substance.
+    Spec (21 Jun 2026 update):
+      - 2-3 sentences (emotional trigger, NO facts yet, builds curiosity)
+      - Must have at least 2 sentences
+      - Must be at least 4 words
     """
     issues = []
 
@@ -1511,10 +1328,15 @@ def validate_hook(hook):
         return False, issues
 
     word_count = len(hook.split())
-
-    # Just check it's not a single word or empty
     if word_count < 4:
         issues.append("hook too short (<4 words)")
+
+    # Sentence count check (v16.1: HOOK must be 2-3 sentences)
+    sent_count = count_sentences(hook)
+    if sent_count < 2:
+        issues.append(f"hook too short ({sent_count} sent, need 2-3)")
+    elif sent_count > 3:
+        issues.append(f"hook too long ({sent_count} sent, max 3)")
 
     return len(issues) == 0, issues
 
@@ -1541,10 +1363,10 @@ def normalize_slide_sentences(slides_data):
       - Under min → pass through, log warning (padding risks fabrication)
     Returns: (normalized_slides_data, list_of_changes)
     """
-    # Per-slide bounds (v16 — matches threads-finance-6slide reference prompt)
-    # HOOK 1-2, SETUP 2-3, COMPLICATION 2-3, INSIGHT 2-3, POV 2-4, CTA 1-2
+    # Per-slide bounds (v16.1 — 21 Jun, HOOK tightened 1-2 → 2-3 per user feedback)
+    # HOOK 2-3, SETUP 2-3, COMPLICATION 2-3, INSIGHT 2-3, POV 2-4, CTA 1-2
     bounds = {
-        1: (1, 2),   # HOOK (emotional, short)
+        1: (2, 3),   # HOOK (emotional, 2-3 sent — substantive)
         2: (2, 3),   # SETUP
         3: (2, 3),   # COMPLICATION
         4: (2, 3),   # INSIGHT
@@ -1588,8 +1410,8 @@ def normalize_slide_sentences(slides_data):
 def validate_slide_sentences(slides_data):
     """Validate sentence counts per slide (per-slide bounds, no tolerance).
 
-    Per v16 spec (21 Jun 2026) — threads-finance-6slide reference:
-      - slide_1 HOOK:         1-2 sentences
+    Per v16.1 spec (21 Jun 2026) — threads-finance-6slide reference, HOOK tightened:
+      - slide_1 HOOK:         2-3 sentences (was 1-2, user feedback: too short)
       - slide_2 SETUP:        2-3 sentences
       - slide_3 COMPLICATION: 2-3 sentences
       - slide_4 INSIGHT:      2-3 sentences
@@ -1597,7 +1419,7 @@ def validate_slide_sentences(slides_data):
       - slide_6 CTA:          1-2 sentences
     """
     bounds = {
-        1: (1, 2), 2: (2, 3), 3: (2, 3),
+        1: (2, 3), 2: (2, 3), 3: (2, 3),
         4: (2, 3), 5: (2, 4), 6: (1, 2),
     }
     issues = []
@@ -1687,14 +1509,20 @@ def validate_grounding(slides_data, article_text):
     return len(issues) == 0, issues
 
 def format_slides(slides_data):
-    """Format slides data into storytelling format with whitespace."""
+    """Format slides data into storytelling format with whitespace.
+
+    For slide_1 (HOOK): prefer `content` because LLM v16 spec puts the hook body
+    in `content` and only a short header in `title`. Fall back to hook/title only
+    if content is empty.
+    """
     slides = []
     for i in range(1, 7):
         key = f"slide_{i}"
         if key in slides_data:
             slide = slides_data[key]
             if i == 1:
-                hook = slide.get("hook", "") or slide.get("title", "") or slide.get("content", "")
+                # Hook body lives in `content` per v16 JSON spec, NOT `title` (which is just a header)
+                hook = slide.get("content", "") or slide.get("hook", "") or slide.get("title", "")
                 hook = hook.replace('—', ', ').replace('–', ', ')
                 slides.append({"hook": hook, "content": ""})
             else:
