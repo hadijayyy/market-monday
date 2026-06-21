@@ -338,7 +338,7 @@ def alert_telegram(msg):
             url = f"https://api.telegram.org/bot{token}/sendMessage"
             payload = {
                 "chat_id": chat_id,
-                "text": f"📈 Market Monday: {msg}",
+                "text": f"📈 Market Monday: {html.escape(msg)}",
                 "parse_mode": "HTML"
             }
             requests.post(url, data=payload, timeout=10)
@@ -550,7 +550,7 @@ def is_fresh(pub_date_str, hours=24):
         now = datetime.now(timezone.utc)
         age = now - pub_date
         return age.total_seconds() < hours * 3600
-    except:
+    except Exception:
         return True
 
 def score_candidate(article, posted, feedback):
@@ -591,65 +591,78 @@ def score_candidate(article, posted, feedback):
         return -300
 
     score = 0
+    matched_keywords = set()
 
     for kw in IMPACT_CRASH:
-        if kw in combined:
+        if kw in combined and kw not in matched_keywords:
             score += 30
+            matched_keywords.add(kw)
             break
 
     for kw in IMPACT_SURGE:
-        if kw in combined:
+        if kw in combined and kw not in matched_keywords:
             score += 25
+            matched_keywords.add(kw)
             break
 
     for kw in IMPACT_NEGATIVE:
-        if kw in combined:
+        if kw in combined and kw not in matched_keywords:
             score += 20
+            matched_keywords.add(kw)
             break
 
     for kw in URGENCY_HIGH:
-        if kw in combined:
+        if kw in combined and kw not in matched_keywords:
             score += 25
+            matched_keywords.add(kw)
             break
 
     for kw in URGENCY_MEDIUM:
-        if kw in combined:
+        if kw in combined and kw not in matched_keywords:
             score += 15
+            matched_keywords.add(kw)
             break
 
     for kw in INDO_HIGH:
-        if kw in combined:
+        if kw in combined and kw not in matched_keywords:
             score += 40
+            matched_keywords.add(kw)
             break
 
     for kw in INDO_MEDIUM:
-        if kw in combined:
+        if kw in combined and kw not in matched_keywords:
             score += 25
+            matched_keywords.add(kw)
             break
 
     for kw in INDO_LOW:
-        if kw in combined:
+        if kw in combined and kw not in matched_keywords:
             score += 15
+            matched_keywords.add(kw)
             break
 
     for kw in BORING_KEYWORDS:
-        if kw in combined:
+        if kw in combined and kw not in matched_keywords:
             score -= 15
+            matched_keywords.add(kw)
             break
 
     for kw in OPINION_KEYWORDS:
-        if kw in combined:
+        if kw in combined and kw not in matched_keywords:
             score -= 20
+            matched_keywords.add(kw)
             break
 
     for kw in VIDEO_KEYWORDS:
-        if kw in title:
+        if kw in title and kw not in matched_keywords:
             score -= 100
+            matched_keywords.add(kw)
             break
 
     for kw in PROMO_KEYWORDS:
-        if kw in combined:
+        if kw in combined and kw not in matched_keywords:
             score -= 50
+            matched_keywords.add(kw)
             break
 
     # Controversy boost
@@ -890,7 +903,7 @@ def extract_json_from_content(content):
             elif isinstance(val, dict):
                 normalized[key] = val
     
-    if len(normalized) >= 4:
+    if len(normalized) >= 7:
         log(f"   extract_json_from_content: found {len(normalized)} slides")
         return normalized
     return None
@@ -1169,20 +1182,20 @@ def validate_slide_sentences(slides_data):
     text1 = slide1.get('hook', '') if isinstance(slide1, dict) else slide1.get('content', '')
     s1 = count_sentences(text1)
     if not (2 <= s1 <= 5):
-        issues.append(f"slide_1: {s1} sentences (need 2-4)")
+        issues.append(f"slide_1: {s1} sentences (need 2-5)")
     
     for i in range(2, 7):
         slide = slides_data.get(f'slide_{i}', {})
         text = slide.get('content', '') if isinstance(slide, dict) else slide.get('hook', '')
         s_count = count_sentences(text)
         if not (3 <= s_count <= 6):
-            issues.append(f"slide_{i}: {s_count} sentences (need 3-5)")
+            issues.append(f"slide_{i}: {s_count} sentences (need 3-6)")
     
     slide7 = slides_data.get('slide_7', {})
     text7 = slide7.get('content', '') if isinstance(slide7, dict) else slide7.get('hook', '')
     s7 = count_sentences(text7)
     if not (2 <= s7 <= 5):
-        issues.append(f"slide_7: {s7} sentences (need 2-4)")
+        issues.append(f"slide_7: {s7} sentences (need 2-5)")
     
     return len(issues) == 0, issues
 
@@ -1246,7 +1259,7 @@ def validate_grounding(slides_data, article_text):
                 continue
             
             # Skip if it's a currency amount (Rp, RM, $, etc.)
-            if re.search(rf'[{re.escape(num)}].*(?:juta|miliar|triliun|ribu|jt|jt|m)', slide_text, re.IGNORECASE):
+            if re.search(rf'{re.escape(num)}\s*(?:juta|miliar|triliun|ribu|jt)', slide_text, re.IGNORECASE):
                 continue
             
             issues.append(f"slide_{i}: Number '{num}' not found in article")
