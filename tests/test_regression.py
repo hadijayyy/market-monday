@@ -180,12 +180,17 @@ def test_select_best_candidate_handles_none_articles():
     assert out == []
 
     # Mix of valid + None
+    # Article uses recent published date (5h ago) so recency_pts=15, total score=68 >= 60.
+    # If date is stale (>24h), recency drops to 5pts and total=58, below v17 threshold.
+    import datetime
+    recent = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=5))
+    recent_str = recent.strftime("%a, %d %b %Y %H:%M:%S +0000")
     valid = {
         "title": "IHSG naik 5% ke level 7000",
         "url": "https://test.com/1",
         "source": "CNBC Indonesia",
         "description": "Pasar modal Indonesia",
-        "published": "Sun, 21 Jun 2026 10:00:00 +0000",
+        "published": recent_str,
     }
     out = mmp.select_best_candidate([None, valid], set(), {}, [], top_n=1)
     assert len(out) == 1
