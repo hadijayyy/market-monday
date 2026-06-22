@@ -1,23 +1,19 @@
 #!/usr/bin/env python3
 """
-Market Monday Direct Post — Post text threads to Threads API for @ryanhadiii.
+Market Monday Post — Post 6-slide threads to Threads API for @ryanhadiii.
 
-Forked from pressbox-direct-post.py for market-monday pipeline. Each slide
-(separated by ===) becomes its own post chained via reply_to_id.
+Standalone posting script (zero pressbox dependency, purged v17.2).
+Each slide (separated by ===) becomes its own post chained via reply_to_id.
+5 second delay between each slide ensures the parent is indexed.
 
-DIFFERENCE FROM PRESSBOX VERSION:
-- Token path hardcoded to ~/.hermes/market_monday/threads_token.json
-- Posts to @ryanhadiii (separate Threads account)
-- No --token-file arg needed (single-account by design)
-
-STRATEGY: Publish root first, wait for it to fully index, then create + publish
-each reply sequentially using the PUBLISHED post ID as reply_to_id.
-5 second delay between each slide to ensure the parent is indexed.
+Token: ~/.hermes/market_monday/threads_token.json (hardcoded, single-account).
 
 Usage:
   python3 market-monday-post.py --file path.md
   python3 market-monday-post.py --verify
   python3 market-monday-post.py --delete POST_ID
+
+Forked from pressbox-direct-post.py at v17.1 (8a22800), purged at v17.2 (f6a08b0).
 """
 
 import json, sys, httpx, time, re

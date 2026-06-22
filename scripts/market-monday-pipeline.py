@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
-MARKET MONDAY Pipeline — All-in-One
+MARKET MONDAY Pipeline — Generation & Validation
 Niche: Economics & Market for Indonesian Professionals
+Target account: @ryanhadiii (Threads)
 
 Modes:
-  (default)      Scrape → Score → LLM → Post
-  --benchmark    Test RSS sources quality
-  --analytics    Fetch engagement, update feedback
-  --dry-run      Skip posting to Threads
-  --model X      Force specific model
+  (default)      Scrape RSS → Score → Pick → Extract → LLM Generate → Validate → Stage
+  --benchmark    Test RSS source quality (writes benchmark_results.json)
+  --analytics    Fetch engagement → update market_feedback.json
+  --dry-run      Generate without writing staging.json
+  --model X      Force specific model (skip fallback chain)
 
-Architecture: Pressbox v7 pattern
+Architecture: forked from Pressbox v7 pattern, fully standalone since v17.2
 Author: Hadijayyy
 Created: 17 Jun 2026
-Updated: 18 Jun 2026 — Optimized HTTP actions, error handling & PEP 8 compliance
+Updated: 22 Jun 2026 — v17.4 (renamed MISTRAL_API_KEY → PIPELINE_MISTRAL_KEY)
 """
 
 import os
