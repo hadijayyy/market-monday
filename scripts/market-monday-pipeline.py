@@ -60,7 +60,7 @@ REPORT_FILE = DATA_DIR / "market_analytics_report.md"
 # Primary: mistral-large-latest (Mistral direct, fast, 8.5/10 ID+EN)
 # Fallback: MiniMax-M3 (tokenrouter, free, slow ~2 min — bumped LLM_TIMEOUT to 180s)
 MODEL_ROUTES = {
-    "mistral-large-latest": ("https://api.mistral.ai/v1/chat/completions", "MISTRAL_API_KEY"),
+    "mistral-large-latest": ("https://api.mistral.ai/v1/chat/completions", "PIPELINE_MISTRAL_KEY"),
     "MiniMax-M3": ("https://api.tokenrouter.com/v1/chat/completions", "MINIMAX_API_KEY"),
 }
 # Primary → fallback chain (order matters — first success wins)
@@ -612,7 +612,7 @@ def is_finance_niche(article, article_content):
     Cost: ~$0.0016 per call (mistral, max_tokens=5, ~800 input tokens).
     Latency: ~3-5s per call.
     """
-    # Load .env so MISTRAL_API_KEY is available when called from cron/headless context.
+    # Load .env so PIPELINE_MISTRAL_KEY is available when called from cron/headless context.
     # Without this, the function silently defaults to True and bypasses the filter.
     load_env()
 
@@ -633,7 +633,7 @@ Pilih SATU:
 
 Jawab: KEUANGAN atau NON-KEUANGAN. Hanya 1 kata."""
 
-    api_key = os.environ.get("MISTRAL_API_KEY")
+    api_key = os.environ.get("PIPELINE_MISTRAL_KEY")
     if not api_key:
         return True  # Default yes if can't check
 
