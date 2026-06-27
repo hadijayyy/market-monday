@@ -59,21 +59,19 @@ REPORT_FILE = DATA_DIR / "market_analytics_report.md"
 # LLM CONFIG
 # Model routes — each model maps to its own API URL + key env var
 # Primary: mistral-large-latest (Mistral direct, fast, 8.5/10 ID+EN)
-# Fallback 1: Groq llama-3.3-70b (fast, cheap, good quality)
-# Fallback 2: MiniMax-M3 (tokenrouter, free, slow ~2 min)
+# Fallback 1: gpt-oss-20b (FreeLLMAPI → Groq, fast, cheap)
 MODEL_ROUTES = {
     "mistral-large-latest": ("https://api.mistral.ai/v1/chat/completions", "PIPELINE_MISTRAL_KEY"),
-    "groq-llama": ("https://api.groq.com/openai/v1/chat/completions", "GROQ_API_KEY"),
-    "MiniMax-M3": ("https://api.tokenrouter.com/v1/chat/completions", "MINIMAX_API_KEY"),
+    "gpt-oss-20b": ("https://freellmapi.nousresearch.com/v1/chat/completions", "FREELLMAPI_API_KEY"),
 }
 # Primary → fallback chain (order matters — first success wins)
-LLM_MODELS = ["mistral-large-latest", "groq-llama", "MiniMax-M3"]
+LLM_MODELS = ["mistral-large-latest", "gpt-oss-20b"]
 DRY_RUN = False
 FORCE_MODEL = None
 # Threads account handle for CTA "Follow @{handle}". Edit if account changes.
 THREADS_HANDLE = "@ryanhadiii"
-LLM_MAX_TOKENS = 16000  # bumped 10000→16000 — v15 prompt strict checks cause M3 over-planning, hits budget mid-thought
-LLM_TIMEOUT = 240  # bumped 180→240s — M3 fallback takes 3-4 min with longer thinking
+LLM_MAX_TOKENS = 8000  # bumped from 4000 to match pressbox — avoid carousel truncation
+LLM_TIMEOUT = 120  # 120s — fail fast, fall through to next model
 
 # SIMILARITY
 SIMILARITY_THRESHOLD = 0.35
