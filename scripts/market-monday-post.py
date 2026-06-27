@@ -6,7 +6,7 @@ Standalone posting script (zero pressbox dependency, purged v17.2).
 Each slide (separated by ===) becomes its own post chained via reply_to_id.
 5 second delay between each slide ensures the parent is indexed.
 
-Token: ~/.hermes/market_monday/threads_token.json (hardcoded, single-account).
+Token: unified via threads_auth module (auto-refresh, multi-account).
 
 Usage:
   python3 market-monday-post.py --file path.md
@@ -20,19 +20,25 @@ import json, sys, httpx, time, re
 import atexit
 from pathlib import Path
 
-HOME = Path.home()
-TOKEN_PATH = HOME / ".hermes" / "market_monday" / "threads_token.json"  # @ryanhadiii
-TOKEN_FILE = TOKEN_PATH  # alias used by load_token()
+# Add threads-tools to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "threads-tools"))
+from threads_auth import ThreadsAuth
+
 THREADS_API = "https://graph.threads.net/v1.0"
 _HTTP = httpx.Client(timeout=8)
 atexit.register(_HTTP.close)
 
+# Unified auth — account "ryanhadiii"
+_AUTH = ThreadsAuth(account="ryanhadiii")
+
 def load_token():
+    """Load token via unified auth (auto-refreshes if needed)."""
     try:
-        data = json.loads(TOKEN_FILE.read_text())
-        return data["access_token"], str(data["user_id"])
-    except (json.JSONDecodeError, KeyError, OSError) as e:
-        print(f"❌ Failed to load token from {TOKEN_FILE}: {e}", file=sys.stderr)
+        token, uid = _AUTH.get_token()
+        return token, uid
+    except Exception as e:
+        print(f"❌ Auth failed: {e}", file=sys.stderr)
+        print(f"   Run: python3 -c \"from threads_auth import ThreadsAuth; ThreadsAuth('ryanhadiii').login()\"", file=sys.stderr)
         raise SystemExit(1) from e
 
 def create_container(uid, token, text, reply_to=None, image_url=None, max_retries=1):

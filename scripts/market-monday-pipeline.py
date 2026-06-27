@@ -59,13 +59,15 @@ REPORT_FILE = DATA_DIR / "market_analytics_report.md"
 # LLM CONFIG
 # Model routes — each model maps to its own API URL + key env var
 # Primary: mistral-large-latest (Mistral direct, fast, 8.5/10 ID+EN)
-# Fallback: MiniMax-M3 (tokenrouter, free, slow ~2 min — bumped LLM_TIMEOUT to 180s)
+# Fallback 1: Groq llama-3.3-70b (fast, cheap, good quality)
+# Fallback 2: MiniMax-M3 (tokenrouter, free, slow ~2 min)
 MODEL_ROUTES = {
     "mistral-large-latest": ("https://api.mistral.ai/v1/chat/completions", "PIPELINE_MISTRAL_KEY"),
+    "groq-llama": ("https://api.groq.com/openai/v1/chat/completions", "GROQ_API_KEY"),
     "MiniMax-M3": ("https://api.tokenrouter.com/v1/chat/completions", "MINIMAX_API_KEY"),
 }
 # Primary → fallback chain (order matters — first success wins)
-LLM_MODELS = ["mistral-large-latest", "MiniMax-M3"]
+LLM_MODELS = ["mistral-large-latest", "groq-llama", "MiniMax-M3"]
 DRY_RUN = False
 FORCE_MODEL = None
 # Threads account handle for CTA "Follow @{handle}". Edit if account changes.
@@ -735,12 +737,14 @@ def call_llm(system_prompt, user_prompt, model):
         ],
         "max_tokens": LLM_MAX_TOKENS,
         "temperature": 0.5,  # 0.8→0.5: less sampling randomness, fewer hallucinated numbers
-        "reasoning_effort": "low",  # global default — reduces reasoning tokens ~35% per skill
         "stream": True
     }
-    # Opt-out for models that don't support reasoning_effort (e.g. mistral direct)
-    if model not in ("MiniMax-M3", "mimo-v2.5", "minimax-m2.5", "minimax-m2.7", "deepseek-v4-flash"):
+    # Model-specific overrides
+    if model == "groq-llama":
+        payload["model"] = "llama-3.3-70b-versatile"
         payload.pop("reasoning_effort", None)
+    elif model not in ("MiniMax-M3", "mimo-v2.5", "minimax-m2.5", "minimax-m2.7", "deepseek-v4-flash"):
+        payload["reasoning_effort"] = "low"
 
     # Defensive: strip reasoning_content from assistant msgs (Mistral rejects extra fields, HTTP 422)
     for _m in payload.get("messages", []):
