@@ -123,8 +123,8 @@ Account handle: `@ryanhadiii` (hardcoded in `pipeline.py` line 70).
 | Job | Schedule | Script | Purpose |
 |-----|----------|--------|---------|
 | Market Monday — Pipeline | hourly :00 | `market-monday-pipeline.py` | Generate + stage content |
-| Market Monday — Post | hourly :00 | `market-monday-post.py` | Post staged content |
-| Market Monday — Analytics | daily 23:00 | `market-monday-pipeline.py --analytics` | Fetch engagement |
+| Monday Market Post | hourly :30 | `market-monday-post.py` | Post staged content to Threads |
+| Market Monday — Analytics | daily 23:00 | `market-monday-pipeline.py --analytics` | Fetch engagement → feedback |
 | Market Monday — Pre-flight | hourly :55 | `mm-preflight.py` | Syntax + files check |
 
 ## Scoring System (v18)
