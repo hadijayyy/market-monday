@@ -23,6 +23,7 @@ import json
 import re
 import html
 import requests
+import time
 import argparse
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -58,18 +59,19 @@ REPORT_FILE = DATA_DIR / "market_analytics_report.md"
 
 # LLM CONFIG
 # Model routes — each model maps to its own API URL + key env var
-# Primary: writing (local, no auth)
+# Primary: Mistral (mistral-large-latest), Fallback: qwen via 9router
 MODEL_ROUTES = {
-    "writing": ("http://172.17.0.1:20128/v1/chat/completions", "9ROUTER_KEY"),
+    "mistral": ("https://api.mistral.ai/v1/chat/completions", "MISTRAL_MM_KEY"),
+    "qwen":    ("http://172.17.0.1:20128/v1/chat/completions", "9ROUTER_KEY"),
 }
 # Primary → fallback chain (order matters — first success wins)
-LLM_MODELS = ["writing"]
+LLM_MODELS = ["mistral", "qwen"]
 DRY_RUN = False
 FORCE_MODEL = None
 # Threads account handle for CTA "Follow @{handle}". Edit if account changes.
 THREADS_HANDLE = "@ryanhadiii"
 LLM_MAX_TOKENS = 8000  # bumped from 4000 to match pressbox — avoid carousel truncation
-LLM_TIMEOUT = 120  # 120s — fail fast, fall through to next model
+LLM_TIMEOUT = 60  # 60s — fail fast, fall through to next model
 
 # SIMILARITY
 SIMILARITY_THRESHOLD = 0.35
@@ -359,6 +361,22 @@ def load_feedback():
         log("No feedback file found - running without boosts")
     return feedback
 
+# Analytics recommendations (preferred hooks, CTA patterns, tone)
+ANALYTICS_RECOMMENDATIONS_FILE = DATA_DIR / "analytics_recommendations.json"
+preferred_hooks = []
+cta_pattern = ""
+tone_adjustment = ""
+try:
+    recs = load_json(ANALYTICS_RECOMMENDATIONS_FILE, {})
+    gt = recs.get("analysis", {}).get("generate_tweaks", {})
+    preferred_hooks = gt.get("preferred_hooks", [])
+    cta_pattern = gt.get("cta_pattern", "")
+    tone_adjustment = gt.get("tone_adjustment", "")
+    if preferred_hooks or cta_pattern:
+        log(f"[ANALYTICS] Loaded: {len(preferred_hooks)} hooks, CTA={'yes' if cta_pattern else 'no'}, tone={'yes' if tone_adjustment else 'no'}")
+except Exception:
+    pass
+
 def extract_topics_from_title(title):
     """DEPRECATED in v17 — kept as stub for analytics backward compat."""
     return ["general"]
@@ -393,6 +411,38 @@ def extract_image(url):
     except Exception as e:
         log(f"[IMAGE] Native extraction failed for {url}: {e}", "WARN")
         return None
+
+def check_image_accessible(url):
+    """Check if image URL returns HTTP 200 via HEAD request."""
+    try:
+        r = requests.head(url, headers=HTTP_HEADERS, timeout=5, allow_redirects=True)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+def score_image(url):
+    """Score image candidate for finance content. Higher = better.
+    ponytail: no dimension parsing (needs struct + 8KB download) — add when image quality complaints arrive.
+    """
+    if not url:
+        return -1
+    score = 0
+    url_lower = url.lower()
+    # Prefer chart/graph/infographic keywords (finance-specific)
+    good_kw = ["chart", "graph", "infographic", "grafik", "diagram", "data", "analytics", "dashboard"]
+    if any(kw in url_lower for kw in good_kw):
+        score += 40
+    # Penalize generic patterns
+    bad_kw = ["screenshot", "thumbnail", "crop", "banner", "header", "logo", "icon", "avatar", "1x1", "spacer"]
+    if any(kw in url_lower for kw in bad_kw):
+        score -= 30
+    # Prefer larger image indicators in URL
+    if any(x in url_lower for x in ["1200", "1024", "1920", "large", "full", "original"]):
+        score += 20
+    # Prefer HTTPS
+    if url.startswith("https"):
+        score += 5
+    return score
 
 # ─── RSS SCRAPING ────────────────────────────────────────────────────────────
 
@@ -662,8 +712,29 @@ Jawab: KEUANGAN atau NON-KEUANGAN. Hanya 1 kata."""
 
 # ─── CONTENT EXTRACTION ──────────────────────────────────────────────────────
 
+ARTICLE_CACHE_FILE = DATA_DIR / "article_cache.json"
+
+def _cache_article(url, text):
+    """Save extracted article to cache. 100-entry LRU eviction."""
+    cache = load_json(ARTICLE_CACHE_FILE, {})
+    cache[url] = {"text": text, "ts": time.time()}
+    if len(cache) > 100:
+        sorted_urls = sorted(cache.keys(), key=lambda u: cache[u].get("ts", 0))
+        for old_url in sorted_urls[:len(cache) - 100]:
+            del cache[old_url]
+    save_json(ARTICLE_CACHE_FILE, cache)
+
 def extract_article_content(url):
-    """Extract article content via newspaper3k fallback system."""
+    """Extract article content via newspaper3k fallback system.
+    ponytail: cache is JSON file (not SQLite) — fine for ~100 entries, upgrade if >1000.
+    """
+    # Article cache: 30min TTL, 100-entry LRU (matches pressbox pattern)
+    article_cache = load_json(ARTICLE_CACHE_FILE, {})
+    if url in article_cache:
+        cached = article_cache[url]
+        if time.time() - cached.get("ts", 0) < 1800:
+            log(f"[EXTRACT] Cache hit ({len(cached['text'])}c)")
+            return cached["text"]
     if HAS_NEWSPAPER:
         try:
             article = newspaper.Article(url)
@@ -671,6 +742,7 @@ def extract_article_content(url):
             article.parse()
             if len(article.text) > 500:
                 log(f"[EXTRACT] newspaper3k: {len(article.text)} chars")
+                _cache_article(url, article.text[:5000])
                 return article.text[:5000]
         except Exception as e:
             log(f"[EXTRACT] newspaper3k failed: {e}", "WARN")
@@ -686,17 +758,20 @@ def extract_article_content(url):
             text = ' '.join([re.sub(r'<[^>]+>', '', p).strip() for p in paragraphs if len(p) > 50])
             if len(text) > 500:
                 log(f"[EXTRACT] native article tag: {len(text)} chars")
+                _cache_article(url, text[:5000])
                 return text[:5000]
 
         paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', html_content, re.DOTALL)
         text = ' '.join([re.sub(r'<[^>]+>', '', p).strip() for p in paragraphs if len(p) > 50])
         if len(text) > 500:
             log(f"[EXTRACT] native p tags: {len(text)} chars")
+            _cache_article(url, text[:5000])
             return text[:5000]
 
         text = re.sub(r'<[^>]+>', ' ', html_content)
         text = re.sub(r'\s+', ' ', text).strip()
         log(f"[EXTRACT] native fallback: {len(text)} chars")
+        _cache_article(url, text[:5000])
         return text[:5000]
 
     except Exception as e:
@@ -738,6 +813,12 @@ def call_llm(system_prompt, user_prompt, model):
     # Model-specific overrides
     if model == "groq-llama":
         payload["model"] = "llama-3.3-70b-versatile"
+        payload.pop("reasoning_effort", None)
+    elif model == "mistral":
+        payload["model"] = "mistral-large-latest"
+        payload.pop("reasoning_effort", None)
+    elif model == "qwen":
+        payload["model"] = "qwen/qwen3-32b"
         payload.pop("reasoning_effort", None)
     elif model not in ("MiniMax-M3", "mimo-v2.5", "minimax-m2.5", "minimax-m2.7", "deepseek-v4-flash"):
         payload["reasoning_effort"] = "low"
@@ -1051,6 +1132,10 @@ Finance content strategist for Threads. Output EXACTLY 6-slide JSON thread from 
 [SOURCE HANDLING]
 Use only article body. Ignore nav, related links, ads, bylines, boilerplate.
 
+[DEDUP — STRICT]
+- Each named person/company from FACT BANK appears in AT MOST ONE slide. Prefer S4 INSIGHT slot.
+- Never repeat the same entity in S2 + S4. If S2 names someone, S4 must use a different entity (or stay source-agnostic).
+
 [SLIDES — MIN sentence counts]
 1. HOOK (1-3, MIN 1): NO preamble. Start with paradox/truth directly. First sentence must be a standalone scroll-stopper.
    HOOK PRIORITY (order matters):
@@ -1092,6 +1177,19 @@ If S1 vague ("sebuah perusahaan", "salah satu bank") or lacks specific identifie
 - No em-dash (—), no hashtags, no bullets, no ALL CAPS, no AI throat-clearing.
 - No Markdown formatting: no asterisks (*text*, **text**), no underscores (_text_, __text__), no tildes (~~text~~). Threads shows these as literal characters.
 - Target: 200-400 chars/slide. Max 4 sentences per slide."""
+
+    # Inject analytics-driven dynamic sections (ported from pressbox)
+    _dynamic_hooks = ""
+    if preferred_hooks:
+        _dynamic_hooks = f"\n- PREFERRED HOOKS (from analytics): {', '.join(preferred_hooks[:3])}. Prioritize these."
+    _dynamic_cta = ""
+    if cta_pattern:
+        _dynamic_cta = f"\n- CTA PATTERN (from analytics): {cta_pattern}"
+    _dynamic_tone = ""
+    if tone_adjustment:
+        _dynamic_tone = f"\n- TONE ADJUSTMENT: {tone_adjustment}"
+    if _dynamic_hooks or _dynamic_cta or _dynamic_tone:
+        system_prompt += f"\n\n[ANALYTICS FEEDBACK]{_dynamic_hooks}{_dynamic_cta}{_dynamic_tone}"
 
     fact_bank = extract_facts(article_content[:3000])
 
@@ -1883,6 +1981,10 @@ def run_pipeline():
             if slide.get("content"):
                 slide["content"] = slide["content"].replace("{{url}}", best["url"])
         image_url = extract_image(best['url'])
+        # Validate image accessibility
+        if image_url and not check_image_accessible(image_url):
+            log(f"[IMAGE] ⚠️ Image not accessible, clearing: {image_url[:60]}", "WARN")
+            image_url = None
 
         staging_data = {
             "title": best["title"],
