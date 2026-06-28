@@ -12,7 +12,7 @@ Automated finance content for [Threads](https://www.threads.net) — economics, 
 │                                                                      │
 │  ├─ Scrape RSS     (Kontan, CNBC ID, Katadata, Bloomberg Technoz)    │
 │  ├─ Filter          (keyword include + strict/ambiguous exclude)     │
-│  ├─ Score           (v17: 5-component, threshold ≥60)                │
+│  ├─ Score           (v18: 7-component, threshold ≥50)                │
 │  ├─ Pick            (title dedup, top_n=3 candidates)                │
 │  ├─ Extract         (newspaper3k + native requests, article cache)   │
 │  ├─ Generate        (Mistral primary → qwen/9router fallback)        │
@@ -127,17 +127,19 @@ Account handle: `@ryanhadiii` (hardcoded in `pipeline.py` line 70).
 | Market Monday — Analytics | daily 23:00 | `market-monday-pipeline.py --analytics` | Fetch engagement |
 | Market Monday — Pre-flight | hourly :55 | `mm-preflight.py` | Syntax + files check |
 
-## Scoring System (v17)
+## Scoring System (v18)
 
-Max 100, threshold ≥60.
+Max 100, threshold ≥50.
 
 | # | Component | Range | Logic |
 |---|-----------|-------|-------|
-| 1 | Keyword Match | 0-40 | `min(matched, 5) × 8`. Word-boundary for ≤4 char tokens. |
+| 1 | Keyword Match | 0-30 | `min(matched, 5) × 6`. Word-boundary for ≤4 char tokens. |
 | 2 | Category | 0-20 | makro/saham/crypto = 20, cross = 10 |
 | 3 | Recency | 0-15 | <6h = 15, 6-24h = 10, 24-48h = 5 |
-| 4 | Data Specificity | 0-15 | Has %/Rp/index = 15, any digit = 7 |
-| 5 | Source Tier | 0-10 | Tier 1 (Kontan, CNBC, Katadata, Bloomberg) = 10 |
+| 4 | Data Specificity | 0-15 | Has %/Rp/bps/index = 15, any digit = 5 |
+| 5 | Market Timing | 0-10 | 9-16 WIB = 10, 7-22 WIB = 5, night = 0 |
+| 6 | Engagement | 0-10 | Boost if topic matches high-engagement past posts |
+| 7 | Anti-clickbait | -10 | Penalty for listicle/generic titles ("5 cara...", "wajib tahu") |
 
 **Hard rejects (→ -1):**
 - Already posted URL
@@ -154,7 +156,7 @@ RSS (4 sources × ~15 articles)
   → Title dedup (fuzzy similarity)
   → Freshness (≤24h)
   → Finance niche LLM check
-  → Score ≥60
+  → Score ≥50
   → Hook quality gate + grounding check
   → Stage
 ```
@@ -234,7 +236,7 @@ Under `~/.hermes/market_monday/`:
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v18.0** | 28 Jun 2026 | Sources: 4 focused (Kontan, CNBC ID, Katadata, Bloomberg Technoz). Removed Detik Finance, BBC, IDX Channel, tier-only sources |
+| **v18.0** | 28 Jun 2026 | 7-component scoring (keyword, category, recency, data, market timing, engagement, anti-clickbait). Threshold 60→50. 4 focused sources. |
 | **v17.7** | 28 Jun 2026 | Expanded keywords (+60 terms), sports/entertainment exclude, word-boundary fix for short exclude tokens |
 | **v17.6** | 28 Jun 2026 | Model fallback (mistral→qwen), article cache, image scoring, dynamic prompt, timeout 120→60s, DEDUP rule |
 | v17.5 | 28 Jun 2026 | Model swap to 9router, chain posting fix, pressbox-style prompt |
