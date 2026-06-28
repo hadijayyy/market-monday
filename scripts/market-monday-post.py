@@ -171,14 +171,9 @@ def get_latest_permalink(uid, token):
 
 def post_thread(uid, token, slides, image_url=None):
     """
-    Post slides as a Threads CAROUSEL (fan-out, not chain).
-
-    Slide 1 is the root post. Slides 2-N are all direct replies to slide 1
-    (fan-out), so they appear as siblings in the Threads UI.
-
-    Post order: slide 1 (root) first, then slides N, N-1, ..., 2 (reverse).
-    Threads UI shows replies newest-first, so this reverse posting produces
-    the correct carousel order top→bottom: S1, S2, S3, S4, S5, S6.
+    Post slides as a Threads CHAIN — each slide replies to the previous.
+    S2 → S1, S3 → S2, S4 → S3, S5 → S4, S6 → S5.
+    Pressbox method — ensures correct carousel order in Threads UI.
 
     image_url: attach to root slide (slide 1) if provided.
     """
@@ -187,75 +182,58 @@ def post_thread(uid, token, slides, image_url=None):
         return []
 
     post_ids = []
-    root_pid = None  # Track the root post ID; all slides reply to this (fan-out)
+    prev_post_id = None  # chain: each slide replies to previous
 
-    # Post slide 1 (root) first
-    # Then post remaining slides in REVERSE order (N, N-1, ..., 2)
-    # so the newest reply ends up being slide 2, which Threads UI displays
-    # directly below the root — preserving carousel order top→bottom.
-    slide_indices = [0] + list(range(len(filtered) - 1, 0, -1))
-
-    for i, slide_idx in enumerate(slide_indices):
-        slide = filtered[slide_idx]
+    for i, slide in enumerate(filtered):
         text = slide.strip()
         if not text:
             continue
 
-        # Char-cap safety net: Threads API rejects > 500 chars. Pipeline should already trim,
-        # but this is the final guard in case staging was written before the fix.
+        # Char-cap safety net: Threads API rejects > 500 chars
         if len(text) > 500:
             trimmed = text[:500]
             last_period = max(trimmed.rfind(". "), trimmed.rfind("! "), trimmed.rfind("? "))
             if last_period > 50:
                 text = trimmed[:last_period + 1]
             else:
-                # Bug fix (v17.4): previous `trimmed.rstrip() + "…"` produced 501 chars
-                # (500 + 1 ellipsis) — Threads API still rejects. Now replace last char
-                # with ellipsis to stay at exactly 500.
                 text = trimmed[:-1].rstrip() + "…"
-            print(f"   ✂️ Slide {slide_idx+1} char-trimmed to {len(text)} chars (final guard)", file=sys.stderr)
-
-        # Carousel parent: root for all slides (fan-out, not chain)
-        reply_to = root_pid if i > 0 else None
+            print(f"   ✂️ Slide {i+1} char-trimmed to {len(text)} chars (final guard)", file=sys.stderr)
 
         try:
-            if reply_to:
-                print(f"   Slide {slide_idx+1}/{len(filtered)}: creating reply to root {root_pid}...", file=sys.stderr)
+            if prev_post_id:
+                print(f"   Slide {i+1}/{len(filtered)}: creating reply to slide {i} ({prev_post_id})...", file=sys.stderr)
             else:
-                print(f"   Slide {slide_idx+1}/{len(filtered)}: creating root container...", file=sys.stderr)
+                print(f"   Slide {i+1}/{len(filtered)}: creating root container...", file=sys.stderr)
 
-            cid = create_container(uid, token, text, reply_to, image_url if slide_idx == 0 else None)
-            print(f"   Slide {slide_idx+1}/{len(filtered)}: publishing...", file=sys.stderr)
+            cid = create_container(uid, token, text, prev_post_id, image_url if i == 0 else None)
+            print(f"   Slide {i+1}/{len(filtered)}: publishing...", file=sys.stderr)
             pid = publish(uid, token, cid)
-            post_ids.append((slide_idx, pid))
-            print(f"   Slide {slide_idx+1}/{len(filtered)}: → {pid}", file=sys.stderr)
+            post_ids.append((i, pid))
+            print(f"   Slide {i+1}/{len(filtered)}: → {pid}", file=sys.stderr)
 
             if i == 0:
-                # Save root ID for all subsequent slides
-                root_pid = pid
                 print(f"Root: {pid}")
-                # Get actual permalink (alphanumeric format like DZvnqdoE7-k)
                 time.sleep(1)
                 permalink = get_latest_permalink(uid, token)
                 if permalink:
                     print(f"Post: {permalink}")
                 else:
                     print(f"Post: https://www.threads.com/@ryanhadiii/post/{pid}")
+
+            # Chain: next slide replies to THIS post
+            prev_post_id = pid
+
         except Exception as e:
-            print(f"   ⚠️ Slide {slide_idx+1}/{len(filtered)} failed: {e}", file=sys.stderr)
-            # RETRY: wait 5s and try once more before giving up
+            print(f"   ⚠️ Slide {i+1}/{len(filtered)} failed: {e}", file=sys.stderr)
+            # RETRY: wait 5s and try once more
             try:
                 time.sleep(5)
                 print(f"   🔄 Retrying slide {i+1}/{len(filtered)}...", file=sys.stderr)
-                cid = create_container(uid, token, text, reply_to, image_url if i == 0 else None)
+                cid = create_container(uid, token, text, prev_post_id, image_url if i == 0 else None)
                 pid = publish(uid, token, cid)
-                # Bug fix (v17.4): append as tuple (slide_idx, pid) for consistency with
-                # initial-attempt path. Previously appended raw `pid`, causing TypeError
-                # in main() when sorting `post_ids` by slide_idx.
-                post_ids.append((slide_idx, pid))
+                post_ids.append((i, pid))
                 print(f"   ✅ Slide {i+1}/{len(filtered)} retry succeeded: → {pid}", file=sys.stderr)
                 if i == 0:
-                    root_pid = pid
                     print(f"Root: {pid}")
                     time.sleep(1)
                     permalink = get_latest_permalink(uid, token)
@@ -263,26 +241,23 @@ def post_thread(uid, token, slides, image_url=None):
                         print(f"Post: {permalink}")
                     else:
                         print(f"Post: https://www.threads.com/@ryanhadiii/post/{pid}")
+                prev_post_id = pid
             except Exception as retry_err:
                 print(f"   ❌ Slide {i+1}/{len(filtered)} retry also failed: {retry_err}", file=sys.stderr)
-                # Bug fix (v17.4): previously checked `i > 0`, which failed when root (i=0)
-                # failed twice — root_pid stayed None, and subsequent slides posted as their
-                # own roots instead of breaking. Now break if root_pid is None regardless of i.
-                if root_pid is None:
-                    print(f"   🛑 Cannot continue — no root post to reply to.", file=sys.stderr)
+                if prev_post_id is None:
+                    print(f"   🛑 Cannot continue — no root post.", file=sys.stderr)
                     return post_ids
                 print(f"   Continuing with remaining slides...", file=sys.stderr)
-                # Skip this slide but keep root_pid for the rest
             continue
 
         if i < len(filtered) - 1:
-            # Rate limit avoidance: 10s pauses to stay under API limit
-            if i == 1:  # After slide 2
+            # Rate limit pauses
+            if i == 1:
                 time.sleep(10)
-            elif i == 3:  # After slide 4
+            elif i == 3:
                 time.sleep(10)
             else:
-                time.sleep(3)  # Wait for Threads API to index parent post
+                time.sleep(3)
 
     return post_ids
 

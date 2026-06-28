@@ -58,14 +58,12 @@ REPORT_FILE = DATA_DIR / "market_analytics_report.md"
 
 # LLM CONFIG
 # Model routes — each model maps to its own API URL + key env var
-# Primary: mistral-large-latest (Mistral direct, fast, 8.5/10 ID+EN)
-# Fallback 1: gpt-oss-20b (FreeLLMAPI → Groq, fast, cheap)
+# Primary: writing (local, no auth)
 MODEL_ROUTES = {
-    "mistral-large-latest": ("https://api.mistral.ai/v1/chat/completions", "PIPELINE_MISTRAL_KEY"),
-    "gpt-oss-20b": ("https://freellmapi.nousresearch.com/v1/chat/completions", "FREELLMAPI_API_KEY"),
+    "writing": ("http://172.17.0.1:20128/v1/chat/completions", "9ROUTER_KEY"),
 }
 # Primary → fallback chain (order matters — first success wins)
-LLM_MODELS = ["mistral-large-latest", "gpt-oss-20b"]
+LLM_MODELS = ["writing"]
 DRY_RUN = False
 FORCE_MODEL = None
 # Threads account handle for CTA "Follow @{handle}". Edit if account changes.
@@ -717,8 +715,8 @@ def call_llm(system_prompt, user_prompt, model):
         return None, None
     api_url, key_env = MODEL_ROUTES[model]
 
-    api_key = os.environ.get(key_env, "")
-    if not api_key:
+    api_key = os.environ.get(key_env, "") if key_env else "no-auth"
+    if key_env and not api_key:
         log(f"Missing {key_env} env var for model {model}", "ERROR")
         return None, None
 
@@ -1122,11 +1120,13 @@ This means: find a different article. Do not attempt a partial or shortened caro
 - Opens with callback to slide 1's hook theme
 - 1-2 sentences MAX
 - Question form
-- Should trigger comments
-- Patterns:
+|- Should trigger comments
+|- Include article Sumber URL at end (natural, format: \"Selengkapnya: URL\" or similar)
+|- Patterns:
   - "Lo masih [hook behavior dari slide 1]?"
   - "Menurut lo [topic dari slide 1] gimana?"
   - "Pernah ngalamin [hook situation] juga?"
+  - "Sumber: [URL]"
 
 # STORYTELLING CHECKLIST (verify before output)
 - [ ] Slide 2's first sentence references slide 1's last word/topic
