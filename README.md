@@ -2,7 +2,7 @@
 
 Automated finance content for [Threads](https://www.threads.net) — economics, market & crypto insights for Indonesian professionals, posted to **[@ryanhadiii](https://www.threads.net/@ryanhadiii)**.
 
-**Status:** v17.7 — production.
+**Status:** v18.0 — production.
 
 ## Architecture
 
@@ -10,7 +10,7 @@ Automated finance content for [Threads](https://www.threads.net) — economics, 
 ┌──────────────────────────────────────────────────────────────────────┐
 │ scripts/market-monday-pipeline.py            (generation, ~2000 LOC) │
 │                                                                      │
-│  ├─ Scrape RSS     (CNBC ID, Detik Finance, IDX Channel, parallel)   │
+│  ├─ Scrape RSS     (Kontan, CNBC ID, Katadata, Bloomberg Technoz)    │
 │  ├─ Filter          (keyword include + strict/ambiguous exclude)     │
 │  ├─ Score           (v17: 5-component, threshold ≥60)                │
 │  ├─ Pick            (title dedup, top_n=3 candidates)                │
@@ -137,7 +137,7 @@ Max 100, threshold ≥60.
 | 2 | Category | 0-20 | makro/saham/crypto = 20, cross = 10 |
 | 3 | Recency | 0-15 | <6h = 15, 6-24h = 10, 24-48h = 5 |
 | 4 | Data Specificity | 0-15 | Has %/Rp/index = 15, any digit = 7 |
-| 5 | Source Tier | 0-10 | Tier 1 (CNBC, kontan) = 10, Tier 2 (detik, idx) = 5 |
+| 5 | Source Tier | 0-10 | Tier 1 (Kontan, CNBC, Katadata, Bloomberg) = 10 |
 
 **Hard rejects (→ -1):**
 - Already posted URL
@@ -148,7 +148,7 @@ Max 100, threshold ≥60.
 ## Filter Chain
 
 ```
-RSS (30 articles)
+RSS (4 sources × ~15 articles)
   → Exclude keywords (noise + non-editorial + sports/entertainment)
   → Include keyword match (4 categories, ~100+ terms)
   → Title dedup (fuzzy similarity)
@@ -234,6 +234,7 @@ Under `~/.hermes/market_monday/`:
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
+| **v18.0** | 28 Jun 2026 | Sources: 4 focused (Kontan, CNBC ID, Katadata, Bloomberg Technoz). Removed Detik Finance, BBC, IDX Channel, tier-only sources |
 | **v17.7** | 28 Jun 2026 | Expanded keywords (+60 terms), sports/entertainment exclude, word-boundary fix for short exclude tokens |
 | **v17.6** | 28 Jun 2026 | Model fallback (mistral→qwen), article cache, image scoring, dynamic prompt, timeout 120→60s, DEDUP rule |
 | v17.5 | 28 Jun 2026 | Model swap to 9router, chain posting fix, pressbox-style prompt |

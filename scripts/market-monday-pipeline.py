@@ -84,19 +84,19 @@ HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
-# RSS SOURCES
+# RSS SOURCES (fokus 4 sumber finansial ID — 28 Jun 2026)
 RSS_SOURCES = [
-    {"name": "CNBC Indonesia", "url": "https://www.cnbcindonesia.com/rss", "type": "rss"},
-    {"name": "Detik Finance", "url": "https://finance.detik.com/rss", "type": "rss"},
-    {"name": "IDX Channel", "url": "https://www.idxchannel.com/rss", "type": "rss"},
+    {"name": "Kontan Insight", "url": "https://insight.kontan.co.id/rss", "type": "rss"},
+    {"name": "CNBC Indonesia", "url": "https://www.cnbcindonesia.com/market/rss", "type": "rss"},
+    {"name": "Katadata", "url": "https://katadata.co.id/rss", "type": "rss"},
+    {"name": "Bloomberg Technoz", "url": "https://www.bloombergtechnoz.com/kanal/finansial/rss", "type": "rss"},
 ]
 
 BENCHMARK_SOURCES = [
-    {"name": "CNBC Indonesia", "url": "https://www.cnbcindonesia.com/rss"},
-    {"name": "Detik Finance", "url": "https://finance.detik.com/rss"},
-    {"name": "IDX Channel", "url": "https://www.idxchannel.com/rss"},
-
-    {"name": "BBC Business", "url": "https://feeds.bbci.co.uk/news/business/rss.xml"},
+    {"name": "Kontan Insight", "url": "https://insight.kontan.co.id/rss"},
+    {"name": "CNBC Indonesia", "url": "https://www.cnbcindonesia.com/market/rss"},
+    {"name": "Katadata", "url": "https://katadata.co.id/rss"},
+    {"name": "Bloomberg Technoz", "url": "https://www.bloombergtechnoz.com/kanal/finansial/rss"},
 ]
 
 # ─── KEYWORD & SCORING SYSTEM (v17 — 21 Jun 2026, per user spec) ─────────────
@@ -200,8 +200,8 @@ AMBIGUOUS_EXCLUDES = ["saham", "token", "blok", "emas"]
 
 # === 3. SOURCE TIER (SUMBER KREDIBILITAS) ===
 
-SOURCE_TIER_1 = ["kontan", "bisnis.com", "cnbc indonesia", "katadata", "investor daily"]
-SOURCE_TIER_2 = ["detik finance", "idx channel", "kumparan", "tempo", "republika", "okezone"]
+SOURCE_TIER_1 = ["kontan", "cnbc indonesia", "katadata", "bloomberg technoz"]
+SOURCE_TIER_2 = []
 
 # === 4. HELPER FUNCTIONS ===
 
