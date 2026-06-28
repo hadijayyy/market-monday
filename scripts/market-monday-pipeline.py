@@ -84,19 +84,17 @@ HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
-# RSS SOURCES (fokus 4 sumber finansial ID — 28 Jun 2026)
+# RSS SOURCES (fokus 3 sumber finansial ID — 29 Jun 2026)
 RSS_SOURCES = [
     {"name": "Kontan Insight", "url": "https://insight.kontan.co.id/rss", "type": "rss"},
     {"name": "CNBC Indonesia", "url": "https://www.cnbcindonesia.com/market/rss", "type": "rss"},
-    {"name": "Katadata", "url": "https://katadata.co.id/rss", "type": "rss"},
-    {"name": "Bloomberg Technoz", "url": "https://www.bloombergtechnoz.com/rss", "type": "rss"},
+    {"name": "Katadata", "url": "https://katadata.co.id/rss/finansial", "type": "rss"},
 ]
 
 BENCHMARK_SOURCES = [
     {"name": "Kontan Insight", "url": "https://insight.kontan.co.id/rss"},
     {"name": "CNBC Indonesia", "url": "https://www.cnbcindonesia.com/market/rss"},
-    {"name": "Katadata", "url": "https://katadata.co.id/rss"},
-    {"name": "Bloomberg Technoz", "url": "https://www.bloombergtechnoz.com/rss"},
+    {"name": "Katadata", "url": "https://katadata.co.id/rss/finansial"},
 ]
 
 # ─── KEYWORD & SCORING SYSTEM (v17 — 21 Jun 2026, per user spec) ─────────────

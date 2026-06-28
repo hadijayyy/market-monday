@@ -10,7 +10,7 @@ Automated finance content for [Threads](https://www.threads.net) — economics, 
 ┌──────────────────────────────────────────────────────────────────────┐
 │ scripts/market-monday-pipeline.py            (generation, ~2000 LOC) │
 │                                                                      │
-│  ├─ Scrape RSS     (Kontan, CNBC ID, Katadata, Bloomberg Technoz)    │
+│  ├─ Scrape RSS     (Kontan, CNBC ID, Katadata)                        │
 │  ├─ Filter          (keyword include + strict/ambiguous exclude)     │
 │  ├─ Score           (v18: 7-component, threshold ≥50)                │
 │  ├─ Pick            (title dedup, top_n=3 candidates)                │
@@ -236,7 +236,7 @@ Under `~/.hermes/market_monday/`:
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| **v18.0** | 28 Jun 2026 | 7-component scoring (keyword, category, recency, data, market timing, engagement, anti-clickbait). Threshold 60→50. 4 focused sources. |
+| **v18.0** | 29 Jun 2026 | 7-component scoring. 3 focused sources (Kontan, CNBC ID, Katadata /rss/finansial). Removed Bloomberg (58% noise). Strict RAG anti-hallucination. Threshold 50. |
 | **v17.7** | 28 Jun 2026 | Expanded keywords (+60 terms), sports/entertainment exclude, word-boundary fix for short exclude tokens |
 | **v17.6** | 28 Jun 2026 | Model fallback (mistral→qwen), article cache, image scoring, dynamic prompt, timeout 120→60s, DEDUP rule |
 | v17.5 | 28 Jun 2026 | Model swap to 9router, chain posting fix, pressbox-style prompt |
