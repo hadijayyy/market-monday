@@ -1716,10 +1716,14 @@ def _write_latest_md(staging_data):
     for i, slide in enumerate(staging_data['slides'], 1):
         hook = slide.get('hook', '')
         content = slide.get('content', '')
-        if i == 1 and hook:
-            md_content += f"{hook}\n\n===\n\n"
-        elif content:
-            md_content += f"{content}\n\n===\n\n"
+        text = hook if (i == 1 and hook) else content
+        if text:
+            # Clean leftover artifacts
+            text = re.sub(r'\{\{(https?://[^}]+)\}\}', r'\1', text)
+            text = text.replace('{{', '').replace('}}', '')
+            md_content += f"{text}\n\n===\n\n"
+    # Strip trailing === 
+    md_content = md_content.rstrip().rstrip('=').rstrip() + "\n"
     LATEST_FILE.write_text(md_content)
     log(f"[DRY] Wrote latest.md ({len(md_content)} chars)")
 
@@ -2106,11 +2110,18 @@ def run_pipeline():
         # Success — save and post
         slides = format_slides(slides_data)
         # Replace {{url}} in slide content with actual article URL
+        # Also strip {{ }} from URLs the LLM may have embedded
         for slide in slides:
-            if slide.get("hook"):
-                slide["hook"] = slide["hook"].replace("{{url}}", best["url"])
-            if slide.get("content"):
-                slide["content"] = slide["content"].replace("{{url}}", best["url"])
+            for key in ("hook", "content"):
+                val = slide.get(key, "")
+                if not val:
+                    continue
+                val = val.replace("{{url}}", best["url"])
+                # Clean {{URL}} → URL (LLM sometimes embeds full URL in braces)
+                val = re.sub(r'\{\{(https?://[^}]+)\}\}', r'\1', val)
+                # Clean leftover {{ }} 
+                val = val.replace("{{", "").replace("}}", "")
+                slide[key] = val
         image_url = extract_image(best['url'])
         # Validate image accessibility
         if image_url and not check_image_accessible(image_url):

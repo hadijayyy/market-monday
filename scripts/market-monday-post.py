@@ -177,7 +177,21 @@ def post_thread(uid, token, slides, image_url=None):
 
     image_url: attach to root slide (slide 1) if provided.
     """
-    filtered = [s for s in slides if s.strip()]
+    def sanitize(text):
+        """Clean slide text: strip ===, {{}}, markdown formatting."""
+        # Remove === separators (any position in text)
+        text = re.sub(r'\s*===\s*', '\n', text).strip()
+        # Extract URL from {{url}} → just url
+        text = re.sub(r'\{\{(https?://[^}]+)\}\}', r'\1', text)
+        # Remove remaining {{ }} wrappers
+        text = text.replace('{{', '').replace('}}', '')
+        # Remove markdown formatting (Threads renders as literal chars)
+        text = re.sub(r'[*_~`#>\[\]|]', '', text).strip()
+        # Collapse multiple newlines
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        return text
+
+    filtered = [sanitize(s) for s in slides if sanitize(s)]
     if not filtered:
         return []
 
