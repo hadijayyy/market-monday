@@ -58,14 +58,11 @@ BENCHMARK_FILE = DATA_DIR / "benchmark_results.json"
 REPORT_FILE = DATA_DIR / "market_analytics_report.md"
 
 # LLM CONFIG
-# Model routes — each model maps to its own API URL + key env var
-# Primary: Mistral (mistral-large-latest), Fallback: qwen via 9router
+# Mistral only — qwen/9router removed (30 Jun 2026)
 MODEL_ROUTES = {
     "mistral": ("https://api.mistral.ai/v1/chat/completions", "MISTRAL_MM_KEY"),
-    "qwen":    ("http://172.17.0.1:20128/v1/chat/completions", "9ROUTER_KEY"),
 }
-# Primary → fallback chain (order matters — first success wins)
-LLM_MODELS = ["mistral", "qwen"]
+LLM_MODELS = ["mistral"]
 DRY_RUN = False
 FORCE_MODEL = None
 # Threads account handle for CTA "Follow @{handle}". Edit if account changes.
@@ -887,9 +884,6 @@ def call_llm(system_prompt, user_prompt, model):
         payload.pop("reasoning_effort", None)
     elif model == "mistral":
         payload["model"] = "mistral-large-latest"
-        payload.pop("reasoning_effort", None)
-    elif model == "qwen":
-        payload["model"] = "qwen/qwen3-32b"
         payload.pop("reasoning_effort", None)
     elif model not in ("MiniMax-M3", "mimo-v2.5", "minimax-m2.5", "minimax-m2.7", "deepseek-v4-flash"):
         payload["reasoning_effort"] = "low"
