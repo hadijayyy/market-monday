@@ -116,6 +116,18 @@ INCLUDE_KEYWORDS = {
         "indeks keyakinan konsumen", "bps", "kemenkeu", "sri mulyani",
         "perry warjiyo", "capital outflow", "capital inflow", "yield obligasi",
         "sbn", "surat utang negara", "lelang sun", "credit rating", "moody's", "fitch", "s&p",
+        # Common ID finance terms (added v17.7)
+        "pajak", "tarif pajak", "ppn", "pph", "bea cukai", "impor", "ekspor",
+        "anggaran", "anggaran negara", "defisit", "surplus", "utang pemerintah",
+        "kredit", "kredit macet", "laba bersih", "pendapatan negara",
+        "investasi", "penanaman modal", "pma", "pmdn", "fdi",
+        "bumn", "bumd", "holding bumn", "deviden bumn",
+        "harga gas", "harga bbm", "subsidi", "energi",
+        "dolar", "dollar", "usd", "mata uang", "kurs rupiah",
+        "perbankan", "likuiditas", "bi rate", "moneter", "fiskal",
+        "phk", "ketenagakerjaan", "upah minimum", "ump",
+        "pertumbuhan", "resiko", "risiko", "outlook ekonomi",
+        "menkeu", "gubernur bi", "komite stabilitas", "kssk",
     ],
     # Saham / IHSG / Emiten
     "saham": [
@@ -126,6 +138,11 @@ INCLUDE_KEYWORDS = {
         "lq45", "idx30", "sektor perbankan", "sektor energi", "sektor consumer",
         "emiten", "suspensi saham", "ara", "arb", "auto reject", "capital gain",
         "analis merekomendasikan", "target harga", "rating saham", "downgrade", "upgrade",
+        # Common ID stock terms (added v17.7)
+        "bursa saham", "perdagangan saham", "nilai saham", "harga saham",
+        "reksadana", "reksa dana", "etf", "obligasi", "surat berharga",
+        "broker", "sekuritas", "trading", "portofolio",
+        "bullish", "bearish", "koreksi pasar", "rally",
     ],
     # Crypto / Web3
     "crypto": [
@@ -141,6 +158,10 @@ INCLUDE_KEYWORDS = {
         "the fed", "suku bunga the fed", "fomc", "jerome powell", "resesi",
         "volatilitas pasar", "sentimen pasar", "geopolitik", "harga minyak",
         "harga emas", "perang dagang", "tarif", "china-as", "krisis ekonomi",
+        # Common global terms (added v17.7)
+        "suku bunga", "inflasi global", "minyak mentah", "komoditas",
+        "emas", "perak", "batu bara", "cpo", "sawit",
+        "reformasi", "kebijakan moneter", "stimulus", "bailout",
     ],
 }
 
@@ -155,6 +176,20 @@ EXCLUDE_KEYWORDS = {
     "non_redaksional": [
         "advertorial", "press release", "lowongan kerja",
         "event promosi", "sponsored content",
+    ],
+    "olahraga_entertainment": [
+        "pildun", "piala dunia", "world cup", "fifa", "uefa", "liga champion",
+        "liga inggris", "liga spanyol", "liga italia", "liga jerman", "liga prancis",
+        "messi", "ronaldo", "mbappe", "haaland", "neymar", "bellingham",
+        "pertandingan", "skor akhir", "gol", "assist", "hat-trick",
+        "prediksi skor", "jadwal pertandingan", "live score", "kualifikasi pildun",
+        "transfer pemain", "kontrak pemain", "pelatih", "manajer timnas",
+        "timnas indonesia", "garuda", "pssi", "liga 1",
+        "motogp", "f1", "formula 1", "nba", "nfl", "mlb",
+        "olympic", "olimpiade", "asian games", "sea games",
+        "film", "serial", "drakor", "drama korea", "anime", "netflix",
+        "musik", "konser", "album", "lagu", "chart musik",
+        "reality show", "masterchef", "indonesian idol", "x factor",
     ],
 }
 
@@ -220,11 +255,17 @@ def check_exclude_keywords(text):
     Returns matched exclude keyword (str) or None.
     """
     text_lower = text.lower()
-    # Strict excludes — direct match
+    # Strict excludes — short tokens (≤4 chars) use word-boundary to avoid
+    # false positives (e.g. "nfl" inside "informasional")
     for cat, keywords in EXCLUDE_KEYWORDS.items():
         for kw in keywords:
-            if kw.lower() in text_lower:
-                return kw
+            kw_lower = kw.lower()
+            if len(kw_lower) <= 4:
+                if re.search(r"\b" + re.escape(kw_lower) + r"\b", text_lower):
+                    return kw
+            else:
+                if kw_lower in text_lower:
+                    return kw
     # Ambiguous excludes — only flag if NO include keyword nearby (±100 chars).
     # Short tokens (≤4 chars: "blok", "emas") use word-boundary to avoid false
     # positives like "kemas"/"lemas" containing "emas" as a substring.
