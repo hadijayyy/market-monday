@@ -101,7 +101,7 @@ BENCHMARK_SOURCES = [
 
 # ─── KEYWORD & SCORING SYSTEM (v17 — 21 Jun 2026, per user spec) ─────────────
 # Scope: Makro Indonesia + Saham/IHSG + Crypto/Web3
-# Skor 0-100, threshold ≥60 untuk masuk pipeline
+# Skor 0-100, threshold ≥50 untuk masuk pipeline
 
 # === 1. INCLUDE KEYWORDS ===
 # Direct substring match (case-insensitive) — keywords chosen to be unambiguous
@@ -577,20 +577,68 @@ def is_fresh(pub_date_str, hours=24):
         log(f"Date parse error: {e}", "WARN")
         return True
 
+# Clickbait / low-value title patterns
+CLICKBAIT_PATTERNS = [
+    r'\b\d+\s+(cara|tips|langkah|fakta|alasan)\b',  # "5 cara investasi"
+    r'\b(wajib|harus|wajib tahu|wajib tau)\b',
+    r'\b(ternyata|ternyata begini)\b',
+    r'\b(mengejutkan|heboh|viral|gila)\b',
+    r'\b(yang perlu|perlu diketahui|perlu tahu)\b',
+]
+
+def is_clickbait(title):
+    """Detect listicle/generic clickbait titles. Returns bool."""
+    t = title.lower()
+    for pat in CLICKBAIT_PATTERNS:
+        if re.search(pat, t):
+            return True
+    return False
+
+def get_market_timing_pts(pub_date_str):
+    """Score based on publish time (WIB = UTC+7).
+    Market hours 9-16 WIB = 10, extended 7-9/16-22 = 5, night = 0.
+    """
+    try:
+        pub = parsedate_to_datetime(pub_date_str)
+        wib_hour = (pub + timedelta(hours=7)).hour
+        if 9 <= wib_hour < 16:
+            return 10  # prime market hours
+        elif 7 <= wib_hour < 22:
+            return 5   # extended
+        else:
+            return 0   # night
+    except Exception:
+        return 5  # unknown → neutral
+
+def get_engagement_boost(title, feedback):
+    """Boost score if topic matches high-engagement past posts.
+    Returns 0-10 based on feedback keywords.
+    ponytail: simple keyword overlap — add embedding similarity when volume grows.
+    """
+    if not feedback:
+        return 0
+    top_keywords = feedback.get("top_keywords", [])
+    if not top_keywords:
+        return 0
+    title_lower = title.lower()
+    matches = sum(1 for kw in top_keywords if kw.lower() in title_lower)
+    return min(matches * 5, 10)  # max 10
+
 def score_candidate(article, posted, feedback):
-    """Score article 0-100 per v17 spec (Makro/Saham/Crypto pipeline).
+    """Score article 0-100 per v18 spec (focused 4-source pipeline).
 
     Components:
-      1. Keyword Match  : +8 pts per unique include keyword (max 5 = 40 pts)
-      2. Category Relev : 20 (Makro/Saham/Crypto) / 10 (cross only) / 0 (none)
+      1. Keyword Match  : +6 pts per unique include keyword (max 5 = 30 pts)
+      2. Category Relev : 20 (Makro/Saham/Crypto) / 10 (cross) / 0 (none)
       3. Recency        : 15 (<6h) / 10 (6-24h) / 5 (24-48h) / 0 (>48h)
-      4. Data/Angka     : 15 (specific: %, Rp, index level) / 7 (vague digits) / 0
-      5. Sumber Tier    : 10 (Tier 1) / 5 (Tier 2) / 0 (unknown)
-      Penalti           : -1 hard reject if exclude keyword matched
+      4. Data/Angka     : 15 (specific: %, Rp, bps, index) / 5 (vague digits) / 0
+      5. Market Timing  : 10 (9-16 WIB) / 5 (extended) / 0 (night)
+      6. Engagement     : 0-10 (boost from past engagement feedback)
+      7. Anti-clickbait : -10 penalty for listicle/generic titles
 
     Returns:
       -1   → hard reject (posted URL or exclude match)
-      0-100 → score (threshold ≥60 untuk pipeline)
+      0-100 → score (threshold ≥50 untuk pipeline)
     """
     title = article.get("title", "")
     desc = article.get("description", "")
@@ -606,9 +654,9 @@ def score_candidate(article, posted, feedback):
         log(f"[SCORING] ❌ EXCLUDE matched ({exclude_kw}): {title[:60]}...", "WARN")
         return -1
 
-    # 1. Keyword Match (max 40 pts)
+    # 1. Keyword Match (max 30 pts)
     matched_count, categories = check_include_keywords(combined)
-    keyword_pts = min(matched_count, 5) * 8
+    keyword_pts = min(matched_count, 5) * 6
 
     # 2. Category Relevance (max 20 pts)
     if categories & {"makro", "saham", "crypto"}:
@@ -633,24 +681,24 @@ def score_candidate(article, posted, feedback):
     if has_specific_data(combined):
         data_pts = 15
     elif re.search(r'\d+', combined):
-        data_pts = 7
+        data_pts = 5
     else:
         data_pts = 0
 
-    # 5. Sumber Kredibilitas (max 10 pts)
-    tier = source_tier(article.get("source", ""))
-    if tier == 1:
-        source_pts = 10
-    elif tier == 2:
-        source_pts = 5
-    else:
-        source_pts = 0
+    # 5. Market Timing (max 10 pts)
+    timing_pts = get_market_timing_pts(article.get("published", ""))
 
-    total = keyword_pts + cat_pts + recency_pts + data_pts + source_pts
-    return total
+    # 6. Engagement Boost (max 10 pts)
+    eng_pts = get_engagement_boost(title, feedback)
+
+    # 7. Anti-clickbait penalty (-10 pts)
+    clickbait_penalty = -10 if is_clickbait(title) else 0
+
+    total = keyword_pts + cat_pts + recency_pts + data_pts + timing_pts + eng_pts + clickbait_penalty
+    return max(total, 0)  # floor at 0
 
 def select_best_candidate(articles, posted, feedback, posted_titles=None, top_n=1):
-    """Select top N articles by score, with title dedup. v17 threshold: ≥60."""
+    """Select top N articles by score, with title dedup. v18 threshold: ≥50."""
     scored = []
     skipped_similar = 0
     skipped_below_threshold = 0
@@ -672,7 +720,7 @@ def select_best_candidate(articles, posted, feedback, posted_titles=None, top_n=
             continue
 
         score = score_candidate(article, posted, feedback)
-        if score >= 60:  # v17 threshold (was: > 0)
+        if score >= 50:  # v18 threshold (was: 60)
             scored.append((score, article))
         elif score >= 0:
             skipped_below_threshold += 1
@@ -680,7 +728,7 @@ def select_best_candidate(articles, posted, feedback, posted_titles=None, top_n=
     if skipped_similar > 0:
         log(f"[DEDUP] Skipped {skipped_similar} similar titles")
     if skipped_below_threshold > 0:
-        log(f"[SCORING] {skipped_below_threshold} articles below threshold (score <60)")
+        log(f"[SCORING] {skipped_below_threshold} articles below threshold (score <50)")
     if skipped_invalid > 0:
         log(f"[SELECT] {skipped_invalid} invalid articles skipped (None/non-dict/empty title)")
 
