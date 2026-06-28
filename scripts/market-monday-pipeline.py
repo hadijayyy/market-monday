@@ -1205,6 +1205,15 @@ Finance content strategist for Threads. Output EXACTLY 6-slide JSON thread from 
 [SOURCE HANDLING]
 Use only article body. Ignore nav, related links, ads, bylines, boilerplate.
 
+[STRICT RAG — ANTI-HALLUCINASI, MANDATORY]
+Mode: Strict RAG. Semua fakta HARUS berasal dari artikel yang diberikan.
+1. Judul, nama orang, perusahaan, angka, tanggal, quote: HARUS ada secara literal di artikel.
+2. DILARANG KERAS mengarang nama orang, tokoh, jurnalis, atau informasi apa pun yang tidak tertulis eksplisit di artikel.
+3. Jika nama orang tidak disebut di artikel, JANGAN sebut nama — cukup sebut jabatan/role ("Manajer Investasi", "Analis", dll).
+4. Jika angka spesifik tidak ada di artikel, JANGAN konkritkan — gunakan frasa umum ("meningkat signifikan", "turun tajam").
+5. Jika informasi tidak ada atau kosong, cukup tulis "Data tidak ditemukan" atau skip slide tersebut.
+6. FAKTA DARI ARTIKEL di bawah adalah SATU-SATUNYA sumber data. Angka/nama yang tidak ada di list tersebut = HALLUSINASI.
+
 [DEDUP — STRICT]
 - Each named person/company from FACT BANK appears in AT MOST ONE slide. Prefer S4 INSIGHT slot.
 - Never repeat the same entity in S2 + S4. If S2 names someone, S4 must use a different entity (or stay source-agnostic).
@@ -1564,29 +1573,27 @@ def validate_slide_sentences(slides_data):
 def validate_grounding(slides_data, article_text):
     """Validate that every factual claim in slides appears in the article.
     
-    Very lenient mode: only flags obvious hallucinations.
-    Excludes years, single digits, currency amounts, and common numbers.
+    Checks both numbers AND named entities (Strict RAG).
+    Returns (is_valid, issues_list).
     """
     issues = []
+    article_lower = article_text.lower()
     
-    # Extract numbers from article (more flexible regex)
+    # --- NUMBER VALIDATION ---
     article_numbers = set()
     for match in re.finditer(r'\d[\d.,]*', article_text):
         article_numbers.add(match.group())
     
-    # Also extract just the digits without formatting
     article_digits = set()
     for num in article_numbers:
         clean = num.replace('.', '').replace(',', '')
         article_digits.add(clean)
     
-    # Year exclusion list (2020-2030)
     EXCLUDE_YEARS = {str(y) for y in range(2020, 2031)}
+    # Minimal common numbers — only truly ubiquitous ones
+    COMMON_NUMBERS = {'1', '2', '3', '4', '5'}
     
-    # Common numbers that appear in content
-    COMMON_NUMBERS = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '100', '1000'}
-    
-    for i in range(1, 7):  # v16: 6 slides only (was 1-7 in v15, leftover bug)
+    for i in range(1, 7):
         slide = slides_data.get(f"slide_{i}", {})
         hook = slide.get('hook', '') if isinstance(slide, dict) else ''
         content = slide.get('content', '') if isinstance(slide, dict) else ''
@@ -1629,6 +1636,46 @@ def validate_grounding(slides_data, article_text):
                 continue
             
             issues.append(f"slide_{i}: Number '{num}' not found in article")
+    
+    # --- ENTITY VALIDATION (Strict RAG) ---
+    # Extract proper nouns from article (2+ consecutive capitalized words)
+    article_entities = set()
+    for m in re.finditer(r'\b[A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]{2,})*', article_text):
+        e = m.group().strip()
+        if len(e) >= 4:
+            article_entities.add(e.lower())
+    
+    # Words that look like names but aren't (common Indonesian/English)
+    NOT_NAMES = {'bank indonesia', 'manajer investasi', 'presiden direktur', 'kementerian',
+                 'bursa efek', 'pasar uang', 'pasar modal', 'analisis teknikal', 'the fed',
+                 'point of view', 'pov gue', 'market cap', 'thread ini'}
+    
+    for i in range(1, 7):
+        slide = slides_data.get(f"slide_{i}", {})
+        hook = slide.get('hook', '') if isinstance(slide, dict) else ''
+        content = slide.get('content', '') if isinstance(slide, dict) else ''
+        slide_text = (hook + ' ' + content)
+        
+        # Find proper nouns in slide (2-3 word capitalized sequences = likely person/org names)
+        for m in re.finditer(r'\b([A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]{2,}){1,3})\b', slide_text):
+            name = m.group().strip()
+            name_lower = name.lower()
+            # Skip common non-names
+            if name_lower in NOT_NAMES:
+                continue
+            # Skip if name (or parts) appear in article
+            if name_lower in article_lower:
+                continue
+            # Check if first+last name parts exist separately (e.g. "Sri Mulyani" where article has "Sri Mulyani")
+            name_parts = name_lower.split()
+            if len(name_parts) >= 2:
+                # Check if full name substring exists
+                if name_lower in article_lower:
+                    continue
+                # Check if first+last appear as sequence (fuzzy: first name alone)
+                if name_parts[0] in article_lower and name_parts[-1] in article_lower:
+                    continue
+            issues.append(f"slide_{i}: Name '{name}' not found in article")
     
     return len(issues) == 0, issues
 
