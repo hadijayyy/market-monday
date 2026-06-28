@@ -198,12 +198,7 @@ EXCLUDE_KEYWORDS = {
 # Only flag if NO include keyword within ±100 chars
 AMBIGUOUS_EXCLUDES = ["saham", "token", "blok", "emas"]
 
-# === 3. SOURCE TIER (SUMBER KREDIBILITAS) ===
-
-SOURCE_TIER_1 = ["kontan", "cnbc indonesia", "katadata", "bloomberg technoz"]
-SOURCE_TIER_2 = []
-
-# === 4. HELPER FUNCTIONS ===
+# === 3. HELPER FUNCTIONS ===
 
 def compute_age_hours(pub_date_str):
     """Compute article age in hours from publish timestamp."""
@@ -215,17 +210,6 @@ def compute_age_hours(pub_date_str):
         return (now - pub_date).total_seconds() / 3600
     except Exception:
         return 999
-
-def source_tier(source):
-    """Return tier (1/2/0) for source name."""
-    s = (source or "").lower()
-    for t in SOURCE_TIER_1:
-        if t in s:
-            return 1
-    for t in SOURCE_TIER_2:
-        if t in s:
-            return 2
-    return 0
 
 def check_include_keywords(text):
     """Returns (matched_count, categories_set). Case-insensitive.
