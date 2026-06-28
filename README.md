@@ -1,81 +1,80 @@
 # Market Monday 📈
 
-Personal branding automation for [Threads](https://www.threads.net) — economics & market insights for Indonesian professionals, posted to **[@ryanhadiii](https://www.threads.net/@ryanhadiii)**.
+Automated finance content for [Threads](https://www.threads.net) — economics, market & crypto insights for Indonesian professionals, posted to **[@ryanhadiii](https://www.threads.net/@ryanhadiii)**.
 
-**Status:** v17.4 — production-tested, 29/29 tests pass.
+**Status:** v17.7 — production.
 
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ scripts/market-monday-pipeline.py            (generation, 2018 LOC)  │
+│ scripts/market-monday-pipeline.py            (generation, ~2000 LOC) │
 │                                                                      │
-│  DEFAULT MODE:                                                       │
-│  ├─ Scrape RSS  (CNBC Indo, Detik Finance, IDX Channel, parallel)    │
-│  ├─ Filter     (keyword include + strict/ambiguous exclude)          │
-│  ├─ Score      (v17: 5-component, threshold ≥60)                    │
-│  ├─ Pick       (Jaccard title dedup @ 0.35, top_n=3 candidates)     │
-│  ├─ Extract    (newspaper3k + native requests, full article body)   │
-│  ├─ Generate   (LLM chain: mistral-large-latest → MiniMax-M3)       │
-│  ├─ Validate   (hook 2-3 sent + per-slide bounds + grounding)       │
-│  └─ Stage      (writes 6-slide JSON → ~/.hermes/market_monday/)     │
+│  ├─ Scrape RSS     (CNBC ID, Detik Finance, IDX Channel, parallel)   │
+│  ├─ Filter          (keyword include + strict/ambiguous exclude)     │
+│  ├─ Score           (v17: 5-component, threshold ≥60)                │
+│  ├─ Pick            (title dedup, top_n=3 candidates)                │
+│  ├─ Extract         (newspaper3k + native requests, article cache)   │
+│  ├─ Generate        (Mistral primary → qwen/9router fallback)        │
+│  ├─ Validate        (hook quality gate + grounding check + dedup)    │
+│  └─ Stage           (6-slide JSON → ~/.hermes/market_monday/)        │
 │                                                                      │
 │  FLAGS:                                                              │
-│  --benchmark   Test RSS source quality → writes benchmark_results   │
-│  --analytics   Fetch engagement → update market_feedback.json       │
-│  --dry-run     Generate without posting (saves staging only)         │
-│  --model X     Force specific model (skip fallback chain)            │
+│  --benchmark     Test RSS source quality                             │
+│  --analytics     Fetch engagement → update feedback                  │
+│  --dry-run       Generate without posting                            │
+│  --model X       Force specific model (mistral / qwen)               │
 └──────────────────────────────────────────────────────────────────────┘
-                                  ↓ staging.json
+                               ↓ staging.json
 ┌──────────────────────────────────────────────────────────────────────┐
-│ scripts/market-monday-post.py                (posting, 400 LOC)     │
+│ scripts/market-monday-post.py                (posting, 377 LOC)     │
 │                                                                      │
-│ Forked from pressbox-direct-post.py for @ryanhadiii (v17.1).         │
-│ No pressbox dependency — fully standalone (v17.2 purge).             │
+│  Standalone — zero pressbox dependency (v17.2 purge).                │
+│  Uses unified ThreadsAuth module for OAuth.                          │
 │                                                                      │
-│  --file PATH.md   Post 6 slides chained via reply_to_id (5s delay)   │
+│  --file PATH.md   Post 6 slides chained via reply_to_id              │
 │  --verify         List recent posts + permalinks                     │
 │  --delete POST_ID Remove a post                                      │
 └──────────────────────────────────────────────────────────────────────┘
-                                  ↓
-                            Threads API → @ryanhadiii
+                               ↓
+                         Threads API → @ryanhadiii
 ```
 
 ## Features
 
-- **Two-script split** — pipeline generates, post.py ships. Same data dir, zero coupling.
-- **RSS scraping** — 3 Indonesian finance sources (CNBC Indonesia, Detik Finance, IDX Channel) via `requests` + parallel `ThreadPoolExecutor`.
-- **v17 5-component scoring** — Keyword (40) + Category (20) + Recency (15) + Specific data (15) + Source tier (10) = 100 max, **threshold ≥60**.
-- **6-slide structure** — HOOK → SETUP → COMPLICATION → INSIGHT → POV → CTA (per `threads-finance-6slide` reference).
-- **Anti-hallucination** — slides 1-4 verbatim/paraphrased from article only. Slides 5-6 allow POV, must be marked.
-- **Dedup** — URL tracking (`posted_topics.json`) + Jaccard title similarity @ 0.35 threshold.
-- **Validation** — hook length (2-3 sent, ≥4 words) + per-slide sentence bounds + grounding check (article numbers must appear in slides).
-- **Model fallback chain** — `mistral-large-latest` (Mistral direct, ~17s) → `MiniMax-M3` (tokenrouter fallback, ~3-4 min).
-- **Streaming** — Mistral SSE for faster first-token; MiniMax full response.
-- **Analytics feedback** — topic/time boosts persisted to `market_feedback.json`, applied during scoring.
+- **Model fallback** — `mistral-large-latest` (primary, ~17s) → `qwen/qwen3-32b` via 9router (fallback).
+- **Article cache** — 30min TTL, 100-entry LRU. Same URL won't re-fetch.
+- **Image validation** — HEAD accessibility check + finance-adapted quality scoring.
+- **Dynamic prompt** — Analytics-fed preferred hooks, CTA patterns, tone adjustment.
+- **6-slide structure** — HOOK → SETUP → COMPLICATION → INSIGHT → POV → CTA.
+- **DEDUP rule** — Each entity appears in max 1 slide (prevents repetition).
+- **Anti-hallucination** — FACT BANK extraction, grounding check, hook quality gate.
+- **Sports/entertainment filter** — Blocks football, F1, NBA, drakor, musik, etc.
+- **Self-healing** — `mm-preflight.py` (syntax + files) + `mm-autofix.py` (auto-repair).
 
 ## CLI Usage
 
 ```bash
-# Normal run — scrape, generate, post to Threads (via cron drain)
+# Normal run — scrape, generate, stage
 python3 scripts/market-monday-pipeline.py
 
-# Dry run — generate staging JSON without posting
+# Dry run — generate without posting
 python3 scripts/market-monday-pipeline.py --dry-run
 
-# Benchmark RSS sources (write benchmark_results.json)
+# Benchmark RSS sources
 python3 scripts/market-monday-pipeline.py --benchmark
 
-# Run analytics — fetch engagement → update market_feedback.json
+# Run analytics
 python3 scripts/market-monday-pipeline.py --analytics
 
-# Force specific model (skip fallback chain)
-python3 scripts/market-monday-pipeline.py --model mistral-large-latest
+# Force specific model
+python3 scripts/market-monday-pipeline.py --model mistral
+python3 scripts/market-monday-pipeline.py --model qwen
 
-# Manual post from staging.md
+# Manual post
 python3 scripts/market-monday-post.py --file ~/.hermes/market_monday/latest.md
 
-# List recent posts with permalinks
+# Verify recent posts
 python3 scripts/market-monday-post.py --verify
 
 # Delete a post
@@ -90,212 +89,163 @@ python3 scripts/market-monday-post.py --delete POST_ID
 pip install requests newspaper3k lxml_html_clean httpx
 ```
 
-Python 3.11+. No GPU needed. No Docker.
+Python 3.11+. No GPU. No Docker.
 
 ### 2. Environment Variables
 
 Add to `~/.hermes/.env`:
 
 ```bash
-# LLM keys (pipeline)
-PIPELINE_MISTRAL_KEY=your_mistral_api_key     # Primary — Mistral direct
-MINIMAX_API_KEY=your_tokenrouter_key   # Fallback — tokenrouter
+# LLM keys
+MISTRAL_MM_KEY=your_mistral_api_key        # Primary
+9ROUTER_KEY=sk_your_9router_key            # Fallback (optional)
 
-# Telegram alerts (optional — for pipeline error notifications)
+# Telegram alerts (optional)
 TELEGRAM_BOT_TOKEN=your_bot_token
 ALERT_CHAT=your_chat_id
 ```
 
-> **Note:** Models.dev's `env:` list for Mistral is `["MISTRAL_API_KEY"]`. After the rename to `PIPELINE_MISTRAL_KEY`, the picker no longer sees it as a known key — that's intentional, prevents leaks via models.dev.
+### 3. Threads Token
 
-### 3. Threads API Token
-
-Create `~/.hermes/market_monday/threads_token.json` (one account = one file):
+Create `~/.hermes/market_monday/threads_token.json`:
 
 ```json
 {
   "user_id": 123456789,
-  "access_token": "your_threads_access_token"
+  "access_token": "your_long_lived_token"
 }
 ```
 
-Account handle is hardcoded in `pipeline.py` (`THREADS_HANDLE = "@ryanhadiii"`) — edit if account changes.
+Account handle: `@ryanhadiii` (hardcoded in `pipeline.py` line 70).
 
-### 4. Cron Job (Optional)
+### 4. Cron Jobs (Hermes)
 
-The post drain runs via the Hermes cron scheduler:
+| Job | Schedule | Script | Purpose |
+|-----|----------|--------|---------|
+| Market Monday — Pipeline | hourly :00 | `market-monday-pipeline.py` | Generate + stage content |
+| Market Monday — Post | hourly :00 | `market-monday-post.py` | Post staged content |
+| Market Monday — Analytics | daily 23:00 | `market-monday-pipeline.py --analytics` | Fetch engagement |
+| Market Monday — Pre-flight | hourly :55 | `mm-preflight.py` | Syntax + files check |
 
-```cron
-# Drain staging → @ryanhadiii every hour at :30
-30 * * * * python3 ~/.hermes/scripts/market-monday-post.py
-```
+## Scoring System (v17)
 
-Pipeline generation is event-driven (triggered manually or by upstream feed). Analytics runs nightly at 23:00:
-
-```cron
-0 23 * * * python3 ~/.hermes/scripts/market-monday-pipeline.py --analytics
-```
-
-## Models
-
-| Model | Role | Speed | Cost |
-|-------|------|-------|------|
-| **mistral-large-latest** | Primary | ~17s | Mistral direct API |
-| **MiniMax-M3** | Fallback | ~3-4 min | Tokenrouter (free tier) |
-
-`LLM_TIMEOUT=240s`, `LLM_MAX_TOKENS=16000`, `temperature=0.5`. Mistral uses streaming; MiniMax falls back to full response.
-
-## Validation System
-
-### 1. Hook Validation (substance check)
-
-| Check | Rule |
-|-------|------|
-| Length | ≥10 chars stripped |
-| Word count | ≥4 words |
-| Sentence count | 2-3 sentences (v16.1, tightened from 1-2) |
-
-> **Note:** v17 dropped the v15 ANGKA/KONTEKS/DRAMA requirement — substance is enforced via the LLM prompt's anti-hallucination rules, not post-hoc regex.
-
-### 2. Per-Slide Sentence Bounds
-
-| Slide | Role | Required |
-|-------|------|----------|
-| Slide 1 | HOOK | 2-3 sentences |
-| Slide 2 | SETUP | 2-3 sentences |
-| Slide 3 | COMPLICATION | 2-3 sentences |
-| Slide 4 | INSIGHT | 2-3 sentences |
-| Slide 5 | POV | 2-4 sentences |
-| Slide 6 | CTA | 1-2 sentences |
-
-### 3. Grounding Check (anti-hallucination)
-
-- Validates that numbers in slides 1-4 exist in the source article
-- Excludes: years (2020-2030), single digits, long IDs, common currency amounts
-- If mismatch → slide is flagged and pipeline retries with stronger grounding prompt
-
-## Content Format (6-Slide Structure)
-
-```
-[SLIDE 1: HOOK]         → Emotional trigger, NO facts yet (build curiosity)
-[SLIDE 2: SETUP]        → What happened (context from article)
-[SLIDE 3: COMPLICATION] → Why it matters / what's at stake
-[SLIDE 4: INSIGHT]      → Key finding/data point from article
-[SLIDE 5: POV]          → Your take — opinion allowed, mark "POV:"
-[SLIDE 6: CTA]          → Question that loops back to slide 1 + URL
-```
-
-Each slide ≤500 chars (Threads API limit). Image attached to root slide only.
-
-## Scoring System (v17, 5 Components)
-
-Max 100 points, threshold ≥60 to enter pipeline.
+Max 100, threshold ≥60.
 
 | # | Component | Range | Logic |
 |---|-----------|-------|-------|
-| 1 | Keyword Match | 0-40 | `min(matched_count, 5) × 8`. Categories: makro, saham, crypto, cross. Short tokens (≤4 chars) use word-boundary regex to avoid substring false positives (e.g. `ara` in `Barat`). |
-| 2 | Category Relevance | 0-20 | `makro`/`saham`/`crypto` = 20. `cross` = 10. Other = 0. |
-| 3 | Recency | 0-15 | <6h = 15. 6-24h = 10. 24-48h = 5. >48h = 0. Future-dated = rejected (v17.3 fix). |
-| 4 | Specific Data | 0-15 | `has_specific_data()` (regex for %) = 15. Has any digit = 7. No digit = 0. |
-| 5 | Source Tier | 0-10 | Tier-1 (Kontan, Bisnis.com, CNBC Indo, Katadata, Investor Daily) = 10. Tier-2 (Detik, IDX, Kumparan, etc.) = 5. Other = 0. |
+| 1 | Keyword Match | 0-40 | `min(matched, 5) × 8`. Word-boundary for ≤4 char tokens. |
+| 2 | Category | 0-20 | makro/saham/crypto = 20, cross = 10 |
+| 3 | Recency | 0-15 | <6h = 15, 6-24h = 10, 24-48h = 5 |
+| 4 | Data Specificity | 0-15 | Has %/Rp/index = 15, any digit = 7 |
+| 5 | Source Tier | 0-10 | Tier 1 (CNBC, kontan) = 10, Tier 2 (detik, idx) = 5 |
 
-**Hard rejects (score → -1):**
+**Hard rejects (→ -1):**
+- Already posted URL
+- Exclude keyword matched (noise, ads, sports/entertainment)
+- Ambiguous exclude with no finance context nearby
+- Future-dated article
 
-- URL in `posted_topics.json` (already posted)
-- Strict exclude keyword matched (`prediksi zodiak`, `lowongan kerja`, `advertorial`, etc.)
-- Ambiguous exclude with no include keyword in ±100 char context window (e.g. `saham mata` vs `saham BCA`)
-- Future-dated article (clock skew / TZ mismatch)
-- `is_finance_niche()` LLM check fails (Mistral direct API, ~3-5s, cost ~$0.0016/call)
+## Filter Chain
 
-## RSS Sources
+```
+RSS (30 articles)
+  → Exclude keywords (noise + non-editorial + sports/entertainment)
+  → Include keyword match (4 categories, ~100+ terms)
+  → Title dedup (fuzzy similarity)
+  → Freshness (≤24h)
+  → Finance niche LLM check
+  → Score ≥60
+  → Hook quality gate + grounding check
+  → Stage
+```
 
-| Source | Type | Tier | Notes |
-|--------|------|------|-------|
-| CNBC Indonesia | rss | 1 | Primary Indonesia finance news |
-| Detik Finance | rss | 2 | High volume, mixed quality |
-| IDX Channel | rss | 2 | Official IDX news, slow updates |
-| BBC Business | rss (benchmark only) | — | Not in default scrape, used for `--benchmark` cross-language quality check |
+## Include Keywords (v17.7, ~100+ terms)
 
-3 active sources by default. BBC Business is benchmark-only to test source quality without polluting staging.
+| Category | Examples |
+|----------|----------|
+| **makro** | rupiah, bank indonesia, inflasi, apbn, sri mulyani, pajak, kredit, investasi, bumn, phk, dolar, subsidi, bea cukai, defisit, fiskal |
+| **saham** | ihsg, bei, ipo, dividen, buyback, foreign outflow, emiten, reksadana, obligasi, broker, sekuritas |
+| **crypto** | bitcoin, ethereum, binance, indodax, defi, nft, blockchain, memecoin, bappebti |
+| **cross** | the fed, fomc, harga emas, harga minyak, tarif, suku bunga, batu bara, cpo, komoditas |
 
-## Topic Tracking (analytics)
+## Exclude Keywords
 
-Tracked in `market_feedback.json` for `--analytics` mode:
+| Category | Examples |
+|----------|----------|
+| **noise** | zodiak, gosip, artis, giveaway |
+| **non_redaksional** | advertorial, press release, lowongan kerja |
+| **olahraga_entertainment** | pildun, fifa, messi, ronaldo, motogp, nba, drakor, netflix, konser, anime |
 
-| Topic | Keywords |
-|-------|----------|
-| inflasi | inflasi, harga, cpi, deflasi |
-| suku_bunga | suku bunga, bi rate, rate hike |
-| global_market | wall street, saham, ihsg, rally |
-| currency | rupiah, dollar, forex, nilai tukar |
-| komoditas | minyak, emas, batu bara, coal |
-| property | properti, rumah, kpr, real estate |
-| tech_biz | ai, tech, startup, fintech |
-| kebijakan | pajak, regulasi, ojk, policy |
-| karir | karir, gaji, phk, layoff |
-| energi | energi, listrik, bbm, subsidi |
-| global_event | perang, war, sanction, imf |
+Short tokens (≤4 char: nfl, nba, f1) use word-boundary regex.
 
-> **Note:** Topic/time boosts are persisted in feedback JSON but **not** applied in v17 scoring formula (removed per user spec 21 Jun 2026 — kept as stub for analytics backward compat).
+## Models
+
+| Model | Role | Speed | Endpoint |
+|-------|------|-------|----------|
+| **mistral-large-latest** | Primary | ~17s | `api.mistral.ai` (Mistral direct) |
+| **qwen/qwen3-32b** | Fallback | ~10s | `172.17.0.1:20128` (9router) |
+
+`LLM_TIMEOUT=60s`, `LLM_MAX_TOKENS=8000`, `temperature=0.5`.
+
+## Content Format (6-Slide)
+
+```
+[SLIDE 1: HOOK]         → Emotional trigger, scroll-stopper. Proper noun + concrete detail.
+[SLIDE 2: SETUP]        → What happened (who/what/when/where)
+[SLIDE 3: COMPLICATION] → Stakes, risk, competing forces
+[SLIDE 4: INSIGHT]      → Key data point, the "value" slide
+[SLIDE 5: POV]          → "POV gue:" — opinion, must trace to article fact
+[SLIDE 6: CTA]          → Rhetorical question + callback S1 + article URL
+```
+
+Each slide ≤500 chars. Image on root slide only. Chain posting (S2 replies to S1, etc.).
 
 ## Data Files
 
-All under `~/.hermes/market_monday/`:
+Under `~/.hermes/market_monday/`:
 
 | File | Description |
 |------|-------------|
-| `staging.json` | Generated 6-slide content waiting to post |
-| `posted_topics.json` | Posted URLs (dedup tracking) |
-| `market_feedback.json` | Analytics feedback (topic/time boosts — v17 stub) |
-| `latest.md` | Latest generated content (readable) |
-| `raw_llm_output.txt` | Raw LLM output for debugging |
+| `staging.json` | Generated 6-slide content |
+| `latest.md` | Readable format of staged content |
+| `posted_topics.json` | Posted URLs (dedup) |
 | `title_cache.json` | Title dedup cache |
-| `benchmark_results.json` | RSS source benchmark results |
-| `market_analytics_report.md` | Analytics report (generated by `--analytics`) |
+| `article_cache.json` | Article content cache (30min TTL) |
+| `market_feedback.json` | Analytics feedback |
+| `raw_llm_output.txt` | Last raw LLM response (debug) |
+
+## Self-Healing
+
+| Script | Schedule | Function |
+|--------|----------|----------|
+| `mm-preflight.py` | :55 hourly | Python syntax + required files + data dir |
+| `mm-autofix.py` | :10,:40 hourly | Auto-fix safe failures (timeout, stale staging, empty LLM) |
 
 ## Performance
 
 | Metric | Value |
 |--------|-------|
 | RSS scraping | <1s (parallel, 4 workers) |
-| Content extraction | <1s (newspaper3k) |
-| LLM generation (Mistral) | ~17s |
-| LLM generation (MiniMax fallback) | ~3-4 min |
-| Total (success path, Mistral) | ~20-30s |
-| Total (fallback path) | ~4-5 min |
+| Article extraction | <1s (cached) / ~2s (fresh) |
+| LLM generation | ~17s (Mistral) / ~10s (qwen) |
+| Total (success path) | ~20s |
 
-## Testing
+## Changelog
 
-```bash
-cd market-monday
-pytest -q
-```
-
-**29/29 pass** across 3 test files:
-
-| File | Tests | Focus |
-|------|-------|-------|
-| `tests/test_smoke.py` | 2 | Import + basic run |
-| `tests/test_regression.py` | 18 | Scoring, dedup, validation, freshness, format_slides |
-| `tests/test_post_regression.py` | 9 | market-monday-post.py posting edge cases (permalink, retry, lock race, char trim) |
-
-## Changelog (highlights)
-
-| Version | Date | Change |
-|---------|------|--------|
-| v17.4 | 22 Jun 2026 | 5 bugs in post.py (post_ids tuple race, root_pid None check, char trim, verify_posts JSON, token load) + 1 defensive (reasoning_content strip in pipeline) |
-| v17.3 | 22 Jun 2026 | is_fresh future-date reject, format_slides None safety, select_best_candidate None handling, hard reject on negative score |
-| v17.2 | 21 Jun 2026 | Purge ALL pressbox contamination from market-monday-post.py |
-| v17.1 | 21 Jun 2026 | Fork post.py for @ryanhadiii (parameterized token path) |
-| v17 | 21 Jun 2026 | Replace keyword/scoring system (5-component, threshold ≥60) per user spec |
-| v16.1 | 21 Jun 2026 | HOOK tightened 1-2 → 2-3 sentences |
-| v16 | 21 Jun 2026 | 6-slide structure (HOOK/SETUP/COMPLICATION/INSIGHT/POV/CTA) — threads-finance-6slide reference |
-| v15 | 21 Jun 2026 | Narrative spine + Indonesian output + HOOK min 2 |
-| Earlier | <21 Jun 2026 | Initial release — 8-slide, 7-layer scoring, deepseek-v4-flash/mimo-v2.5 chain |
+| Version | Date | Key Changes |
+|---------|------|-------------|
+| **v17.7** | 28 Jun 2026 | Expanded keywords (+60 terms), sports/entertainment exclude, word-boundary fix for short exclude tokens |
+| **v17.6** | 28 Jun 2026 | Model fallback (mistral→qwen), article cache, image scoring, dynamic prompt, timeout 120→60s, DEDUP rule |
+| v17.5 | 28 Jun 2026 | Model swap to 9router, chain posting fix, pressbox-style prompt |
+| v17.4 | 22 Jun 2026 | 5 bug fixes in post.py |
+| v17.3 | 22 Jun 2026 | Future-date reject, None safety |
+| v17.2 | 21 Jun 2026 | Purge pressbox contamination from post.py |
+| v17.1 | 21 Jun 2026 | Fork post.py for @ryanhadiii |
+| v17 | 21 Jun 2026 | 5-component scoring, threshold ≥60 |
 
 ## Based On
 
-Architecture reference: [Press Box Pipeline](https://github.com/hadijayyy/pressbox-pipeline) — proven football content automation for Threads. The pipeline pattern was forked and adapted for Indonesian finance niche. The posting script was forked in v17.1, then made fully standalone in v17.2 (zero pressbox dependency).
+Forked from [Press Box Pipeline](https://github.com/hadijayyy/pressbox-pipeline) — football content automation for Threads. Adapted for Indonesian finance niche. Post script standalone since v17.2.
 
 ## License
 
