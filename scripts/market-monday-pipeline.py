@@ -1592,6 +1592,19 @@ def format_slides(slides_data):
                 slides.append({"hook": "", "content": content})
     return slides
 
+def _write_latest_md(staging_data):
+    """Write latest.md from staging data for preview/posting."""
+    md_content = ""
+    for i, slide in enumerate(staging_data['slides'], 1):
+        hook = slide.get('hook', '')
+        content = slide.get('content', '')
+        if i == 1 and hook:
+            md_content += f"{hook}\n\n===\n\n"
+        elif content:
+            md_content += f"{content}\n\n===\n\n"
+    LATEST_FILE.write_text(md_content)
+    log(f"[DRY] Wrote latest.md ({len(md_content)} chars)")
+
 # ─── THREADS POSTING ─────────────────────────────────────────────────────────
 
 def post_to_threads(staging_data):
@@ -1607,9 +1620,9 @@ def post_to_threads(staging_data):
         hook = slide.get('hook', '')
         content = slide.get('content', '')
         if i == 1 and hook:
-            md_content += f"{hook}\n\n---\n\n"
+            md_content += f"{hook}\n\n===\n\n"
         elif content:
-            md_content += f"{content}\n\n---\n\n"
+            md_content += f"{content}\n\n===\n\n"
 
     temp_file = DATA_DIR / "latest.md"
     temp_file.write_text(md_content)
@@ -1998,8 +2011,8 @@ def run_pipeline():
         save_json(STAGING_FILE, staging_data)
 
         if DRY_RUN:
-            log("🏃 Dry run configured - processing skipped.")
-            update_analytics(staging_data, "dry-run", "dry-run-mode")
+            log("🏃 Dry run configured - posting skipped.")
+            _write_latest_md(staging_data)
         else:
             success, r_id, p_link = post_to_threads(staging_data)
             update_analytics(staging_data, r_id, p_link)
