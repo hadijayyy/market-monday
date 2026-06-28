@@ -89,14 +89,14 @@ RSS_SOURCES = [
     {"name": "Kontan Insight", "url": "https://insight.kontan.co.id/rss", "type": "rss"},
     {"name": "CNBC Indonesia", "url": "https://www.cnbcindonesia.com/market/rss", "type": "rss"},
     {"name": "Katadata", "url": "https://katadata.co.id/rss", "type": "rss"},
-    {"name": "Bloomberg Technoz", "url": "https://www.bloombergtechnoz.com/kanal/finansial/rss", "type": "rss"},
+    {"name": "Bloomberg Technoz", "url": "https://www.bloombergtechnoz.com/rss", "type": "rss"},
 ]
 
 BENCHMARK_SOURCES = [
     {"name": "Kontan Insight", "url": "https://insight.kontan.co.id/rss"},
     {"name": "CNBC Indonesia", "url": "https://www.cnbcindonesia.com/market/rss"},
     {"name": "Katadata", "url": "https://katadata.co.id/rss"},
-    {"name": "Bloomberg Technoz", "url": "https://www.bloombergtechnoz.com/kanal/finansial/rss"},
+    {"name": "Bloomberg Technoz", "url": "https://www.bloombergtechnoz.com/rss"},
 ]
 
 # ─── KEYWORD & SCORING SYSTEM (v17 — 21 Jun 2026, per user spec) ─────────────
