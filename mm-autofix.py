@@ -20,7 +20,7 @@ import sys
 import time
 from datetime import datetime
 
-PIPELINE_JID = "e533dbfcd1d9"  # Monday Market Post
+PIPELINE_JID = "79c1ccff303d"  # Market Monday — Post
 PIPELINE_SCRIPT = "market-monday-post.py"
 STAGING_PATH = os.path.expanduser("~/.hermes/market_monday/staging.json")
 OUTPUT_DIR = f"/home/ubuntu/.hermes/cron/output/{PIPELINE_JID}"

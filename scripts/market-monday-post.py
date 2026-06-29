@@ -355,7 +355,20 @@ def main():
         if idx + 1 >= len(sys.argv):
             print("❌ Error: Missing file path after --file")
             sys.exit(1)
-        text = Path(sys.argv[idx + 1]).read_text().strip()
+        file_path = Path(sys.argv[idx + 1])
+        text = file_path.read_text().strip()
+        
+        # Try to load staging.json for image_url
+        staging_path = file_path.parent / "staging.json"
+        if staging_path.exists():
+            try:
+                staging_data = json.loads(staging_path.read_text())
+                image_url = staging_data.get("image_url", "")
+                if image_url:
+                    print(f"📷 Image URL loaded from staging.json: {image_url[:60]}...", file=sys.stderr)
+            except Exception as e:
+                print(f"⚠️ Failed to load staging.json: {e}", file=sys.stderr)
+                image_url = None
     elif not sys.stdin.isatty():
         text = sys.stdin.read().strip()
     elif len(sys.argv) > 1 and not sys.argv[1].startswith("--"):

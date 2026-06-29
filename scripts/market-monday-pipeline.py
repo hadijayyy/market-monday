@@ -763,7 +763,7 @@ def is_tech_niche(article, article_content):
     Cost: ~$0.0016 per call (mistral, max_tokens=5, ~800 input tokens).
     Latency: ~3-5s per call.
     """
-    # Load .env so PIPELINE_MISTRAL_KEY is available when called from cron/headless context.
+    # Load .env so MISTRAL_MM_KEY is available when called from cron/headless context.
     # Without this, the function silently defaults to True and bypasses the filter.
     load_env()
 
@@ -784,7 +784,7 @@ Pilih SATU:
 
 Jawab: TEKNOLOGI atau NON-TEKNOLOGI. Hanya 1 kata."""
 
-    api_key = os.environ.get("PIPELINE_MISTRAL_KEY")
+    api_key = os.environ.get("MISTRAL_MM_KEY")
     if not api_key:
         return True  # Default yes if can't check
 
