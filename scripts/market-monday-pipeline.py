@@ -1768,6 +1768,8 @@ def _write_latest_md(staging_data):
             # Clean leftover artifacts
             text = re.sub(r'\{\{(https?://[^}]+)\}\}', r'\1', text)
             text = text.replace('{{', '').replace('}}', '')
+            # Strip markdown formatting (Threads renders as literal chars)
+            text = re.sub(r'[*_~`#>\[\]|]', '', text).strip()
             md_content += f"{text}\n\n===\n\n"
     # Strip trailing === 
     md_content = md_content.rstrip().rstrip('=').rstrip() + "\n"
