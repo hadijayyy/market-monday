@@ -96,7 +96,7 @@ BENCHMARK_SOURCES = [
 
 # ─── KEYWORD & SCORING SYSTEM (v19 — 30 Jun 2026, niche: Tech/AI/Startup) ─────
 # Scope: Tech Indonesia + AI/LLM + Startup/Digital
-# Skor 0-100, threshold ≥50 untuk masuk pipeline
+# Skor 0-100, threshold ≥42 untuk masuk pipeline (v19.1)
 
 # === 1. INCLUDE KEYWORDS ===
 # Direct substring match (case-insensitive) — keywords chosen to be unambiguous
@@ -188,7 +188,7 @@ EXCLUDE_KEYWORDS = {
         "messi", "ronaldo", "mbappe", "haaland", "neymar", "bellingham",
         "pertandingan", "skor akhir", "gol", "assist", "hat-trick",
         "prediksi skor", "jadwal pertandingan", "live score", "kualifikasi pildun",
-        "transfer pemain", "kontrak pemain", "pelatih", "manajer timnas",
+        "transfer pemain", "kontrak pemain", "manajer timnas",
         "timnas indonesia", "garuda", "pssi", "liga 1",
         "motogp", "f1", "formula 1", "nba", "nfl", "mlb",
         "olympic", "olimpiade", "asian games", "sea games",
@@ -225,7 +225,7 @@ EXCLUDE_KEYWORDS = {
 }
 
 # Ambiguous excludes — context-window check required
-AMBIGUOUS_EXCLUDES = ["token", "robot", "drone"]
+AMBIGUOUS_EXCLUDES = ["token", "robot", "drone", "pelatih"]
 
 # === 3. HELPER FUNCTIONS ===
 
@@ -285,17 +285,13 @@ def check_exclude_keywords(text):
     include_kws_flat = [kw.lower() for kws in INCLUDE_KEYWORDS.values() for kw in kws]
     context_window = 100
     for kw in AMBIGUOUS_EXCLUDES:
-        if len(kw) <= 4:
-            # Word-boundary match for short tokens
-            pattern = r"\b" + re.escape(kw) + r"\b"
-            match = re.search(pattern, text_lower)
-            if not match:
-                continue
-            idx = match.start()
-        else:
-            idx = text_lower.find(kw)
-            if idx == -1:
-                continue
+        # Always use word-boundary to avoid substring false positives
+        # (e.g. "pelatih" inside "pelatihan", "token" inside "tokennya")
+        pattern = r"\b" + re.escape(kw) + r"\b"
+        match = re.search(pattern, text_lower)
+        if not match:
+            continue
+        idx = match.start()
         context = text_lower[max(0, idx-context_window):idx+len(kw)+context_window]
         has_include_nearby = any(inc in context for inc in include_kws_flat)
         if not has_include_nearby:
@@ -711,7 +707,7 @@ def score_candidate(article, posted, feedback):
     return max(total, 0)  # floor at 0
 
 def select_best_candidate(articles, posted, feedback, posted_titles=None, top_n=1):
-    """Select top N articles by score, with title dedup. v18 threshold: ≥50."""
+    """Select top N articles by score, with title dedup. v19.1 threshold: ≥42."""
     scored = []
     skipped_similar = 0
     skipped_below_threshold = 0
@@ -733,7 +729,7 @@ def select_best_candidate(articles, posted, feedback, posted_titles=None, top_n=
             continue
 
         score = score_candidate(article, posted, feedback)
-        if score >= 50:  # v18 threshold (was: 60)
+        if score >= 42:  # v19.1 threshold (was: 50, too few candidates from 3 sources)
             scored.append((score, article))
         elif score >= 0:
             skipped_below_threshold += 1
@@ -741,7 +737,7 @@ def select_best_candidate(articles, posted, feedback, posted_titles=None, top_n=
     if skipped_similar > 0:
         log(f"[DEDUP] Skipped {skipped_similar} similar titles")
     if skipped_below_threshold > 0:
-        log(f"[SCORING] {skipped_below_threshold} articles below threshold (score <50)")
+        log(f"[SCORING] {skipped_below_threshold} articles below threshold (score <42)")
     if skipped_invalid > 0:
         log(f"[SELECT] {skipped_invalid} invalid articles skipped (None/non-dict/empty title)")
 
@@ -1313,11 +1309,15 @@ ARTIKEL:
 
     models_to_try = [FORCE_MODEL] if FORCE_MODEL else LLM_MODELS
     MAX_HOOK_RETRIES = 2
+    grounding_feedback = ""  # populated on grounding fail, fed into next retry
     
     for model in models_to_try:
         for attempt in range(MAX_HOOK_RETRIES):
             log(f"[LLM] Trying model: {model} (attempt {attempt + 1})")
-            content, reasoning = call_llm(system_prompt, user_prompt, model)
+            retry_prompt = user_prompt
+            if grounding_feedback:
+                retry_prompt += f"\n\n⚠️ GAGAL SEBELUMNYA — masalah grounding:\n{grounding_feedback}\nPerbaiki: JANGAN sebut angka/nama yang tidak ada di FAKTA."
+            content, reasoning = call_llm(system_prompt, retry_prompt, model)
 
             if content or reasoning:
                 save_json(RAW_OUTPUT_FILE, {
@@ -1352,13 +1352,18 @@ ARTIKEL:
                     hook = slides_data.get("slide_1", {}).get("hook", "") or slides_data.get("slide_1", {}).get("content", "")
                     is_valid, issues = validate_hook(hook)
                     
+                    # Always check grounding (even if hook fails) to capture feedback for retry
+                    grounding_valid, grounding_issues = validate_grounding(slides_data, article_content)
+                    if not grounding_valid:
+                        grounding_feedback = "; ".join(grounding_issues)
+                    
                     if is_valid:
                         # Normalize sentence counts (trim to max instead of rejecting)
                         slides_data, norm_changes = normalize_slide_sentences(slides_data)
                         if norm_changes:
                             log(f"[LLM] ✂️ Normalized: {'; '.join(norm_changes)}", "INFO")
 
-                        # Add \\n\\n between every sentence (mobile readability on Threads)
+                        # Add \n\n between every sentence (mobile readability on Threads)
                         ws_changes = 0
                         for i in range(1, 7):
                             slide = slides_data.get(f"slide_{i}", {})
@@ -1376,8 +1381,6 @@ ARTIKEL:
                         if ws_changes:
                             log(f"[LLM] ␣ Whitespace applied to {ws_changes} slides", "INFO")
 
-                        grounding_valid, grounding_issues = validate_grounding(slides_data, article_content)
-
                         if grounding_valid:
                             log(f"[LLM] ✅ Success with {model} - Hook valid: {hook[:50]}...")
                             return slides_data
@@ -1385,7 +1388,8 @@ ARTIKEL:
                             log(f"[LLM] ⚠️ Grounding issues: {', '.join(grounding_issues)}", "WARN")
                             continue
                     else:
-                        log(f"[LLM] ⚠️ Hook invalid: {', '.join(issues)}", "WARN")
+                        all_issues = issues + (grounding_issues if not grounding_valid else [])
+                        log(f"[LLM] ⚠️ Hook invalid: {', '.join(all_issues)}", "WARN")
                         continue
                 else:
                     log(f"[LLM] ❌ JSON parse failed for {model}", "WARN")
