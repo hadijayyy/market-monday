@@ -197,6 +197,31 @@ EXCLUDE_KEYWORDS = {
         "reality show", "masterchef", "indonesian idol", "x factor",
         "persebaya", "persib", "arema", "bali united", "bri liga 1",
     ],
+    "cuaca_bencana": [
+        "cuaca", "suhu", "hujan", "banjir", "longsor", "gempa", "tsunami",
+        "gunung meletus", "erupsi", "BMKG", "cuaca ekstrem",
+        "siklon tropis", "megatsunami", "topan", "badai petir",
+        "iklim", "el nino", "la nina", "musim kemarau", "musim hujan",
+        "angin kencang", "gelombang panas", "gelombang dingin",
+        "kekeringan", "kekeringan air",
+        "cuaca buruk", "prediksi cuaca", "ramalan cuaca",
+    ],
+    "kiamat_horor": [
+        "kiamat", "tanggal kiamat", "hitung mundur kiamat",
+        "bumi hancur", "asteroid hantam", "ledakan matahari",
+        "koloni mars", "luar angkasa",
+    ],
+    "politik_gosip": [
+        "donald trump", "trump", "mega", "surya paloh",
+        "pilkada", "pemilu", "kpu", "bawaslu",
+        "korupsi", "suap", "kpk", "tersangka",
+    ],
+    "sains_umum": [
+        "penelitian sains", "penemuan sains", "fosil", "dinosaurus",
+        "penelitian sains menemukan", "ilmuwan temukan",
+        "fosil ditemukan", "spesies baru",
+        "penelitian kesehatan", "penelitian medis",
+    ],
 }
 
 # Ambiguous excludes — context-window check required
