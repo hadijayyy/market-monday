@@ -81,82 +81,92 @@ HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
-# RSS SOURCES (fokus 3 sumber finansial ID — 29 Jun 2026)
+# RSS SOURCES (fokus 3 sumber Tech/AI ID — 30 Jun 2026)
 RSS_SOURCES = [
-    {"name": "Kontan Insight", "url": "https://insight.kontan.co.id/rss", "type": "rss"},
-    {"name": "CNBC Indonesia", "url": "https://www.cnbcindonesia.com/market/rss", "type": "rss"},
-    {"name": "Katadata", "url": "https://katadata.co.id/rss/finansial", "type": "rss"},
+    {"name": "CNBC Tech", "url": "https://www.cnbcindonesia.com/tech/rss", "type": "rss"},
+    {"name": "Detik Inet", "url": "https://inet.detik.com/rss", "type": "rss"},
+    {"name": "CNN Tekno", "url": "https://www.cnnindonesia.com/teknologi/rss", "type": "rss"},
 ]
 
 BENCHMARK_SOURCES = [
-    {"name": "Kontan Insight", "url": "https://insight.kontan.co.id/rss"},
-    {"name": "CNBC Indonesia", "url": "https://www.cnbcindonesia.com/market/rss"},
-    {"name": "Katadata", "url": "https://katadata.co.id/rss/finansial"},
+    {"name": "CNBC Tech", "url": "https://www.cnbcindonesia.com/tech/rss"},
+    {"name": "Detik Inet", "url": "https://inet.detik.com/rss"},
+    {"name": "CNN Tekno", "url": "https://www.cnnindonesia.com/teknologi/rss"},
 ]
 
-# ─── KEYWORD & SCORING SYSTEM (v17 — 21 Jun 2026, per user spec) ─────────────
-# Scope: Makro Indonesia + Saham/IHSG + Crypto/Web3
+# ─── KEYWORD & SCORING SYSTEM (v19 — 30 Jun 2026, niche: Tech/AI/Startup) ─────
+# Scope: Tech Indonesia + AI/LLM + Startup/Digital
 # Skor 0-100, threshold ≥50 untuk masuk pipeline
 
 # === 1. INCLUDE KEYWORDS ===
 # Direct substring match (case-insensitive) — keywords chosen to be unambiguous
 
 INCLUDE_KEYWORDS = {
-    # Makro Indonesia (BI, APBN, kurs, dll)
-    "makro": [
-        "rupiah", "nilai tukar", "kurs", "bi rate", "bi-rate", "suku bunga acuan",
-        "bank indonesia", "inflasi", "deflasi", "pdb", "pertumbuhan ekonomi",
-        "neraca dagang", "neraca perdagangan", "ekspor impor", "defisit anggaran",
-        "apbn", "cadangan devisa", "utang luar negeri", "pmi manufaktur",
-        "indeks keyakinan konsumen", "bps", "kemenkeu", "sri mulyani",
-        "perry warjiyo", "capital outflow", "capital inflow", "yield obligasi",
-        "sbn", "surat utang negara", "lelang sun", "credit rating", "moody's", "fitch", "s&p",
-        # Common ID finance terms (added v17.7)
-        "pajak", "tarif pajak", "ppn", "pph", "bea cukai", "impor", "ekspor",
-        "anggaran", "anggaran negara", "defisit", "surplus", "utang pemerintah",
-        "kredit", "kredit macet", "laba bersih", "pendapatan negara",
-        "investasi", "penanaman modal", "pma", "pmdn", "fdi",
-        "bumn", "bumd", "holding bumn", "deviden bumn",
-        "harga gas", "harga bbm", "subsidi", "energi",
-        "dolar", "dollar", "usd", "mata uang", "kurs rupiah",
-        "perbankan", "likuiditas", "bi rate", "moneter", "fiskal",
-        "phk", "ketenagakerjaan", "upah minimum", "ump",
-        "pertumbuhan", "resiko", "risiko", "outlook ekonomi",
-        "menkeu", "gubernur bi", "komite stabilitas", "kssk",
+    # AI / Machine Learning
+    "ai": [
+        "ai", "artificial intelligence", "kecerdasan buatan",
+        "chatgpt", "openai", "gpt", "gpt-4", "gpt-5", "o1", "o3",
+        "google gemini", "gemini ai", "deepseek", "claude", "anthropic",
+        "copilot", "github copilot", "microsoft copilot",
+        "llm", "large language model", "machine learning", "deep learning",
+        "neural network", "transformer", "generative ai", "gen ai",
+        "prompt engineering", "fine-tuning", "rag", "retrieval augmented",
+        "ai agent", "ai chatbot", "ai tools", "ai generated",
+        "suno", "midjourney", "stable diffusion", "dall-e", "sora",
+        "perplexity", "grok", "mistral", "meta ai", "llama",
+        "otomasi ai", "ai indonesia", "regulasi ai",
     ],
-    # Saham / IHSG / Emiten
-    "saham": [
-        "ihsg", "indeks harga saham gabungan", "bei", "bursa efek indonesia",
-        "saham blue chip", "market cap", "kapitalisasi pasar", "ipo",
-        "laporan keuangan", "kuartal", "dividen", "right issue", "buyback",
-        "saham gorengan", "foreign outflow", "foreign inflow", "net sell", "net buy",
-        "lq45", "idx30", "sektor perbankan", "sektor energi", "sektor consumer",
-        "emiten", "suspensi saham", "ara", "arb", "auto reject", "capital gain",
-        "analis merekomendasikan", "target harga", "rating saham", "downgrade", "upgrade",
-        # Common ID stock terms (added v17.7)
-        "bursa saham", "perdagangan saham", "nilai saham", "harga saham",
-        "reksadana", "reksa dana", "etf", "obligasi", "surat berharga",
-        "broker", "sekuritas", "trading", "portofolio",
-        "bullish", "bearish", "koreksi pasar", "rally",
+    # Startup / Digital Economy
+    "startup": [
+        "startup", "unicorn", "decacorn", "soonicorn",
+        "gojek", "grab", "tokopedia", "goTo", "bukalapap", "traveloka",
+        "shopee", "blibli", "tiket.com", "ruangguru", "zenius",
+        "venture capital", "series a", "series b", "pendanaan", "funding",
+        "akuisisi", "merger startup", "pivot", "burn rate", "runway",
+        "founder", "co-founder", "ceo startup", "cto",
+        "fintech", "edtech", "healthtech", "logistik tech", "agritech",
+        "e-commerce", "marketplace", "super app",
+        "inkubator", "akselerator", "startup studio",
+        "go public", "exit strategy", "valuasi",
     ],
-    # Crypto / Web3
-    "crypto": [
-        "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "altcoin", "stablecoin",
-        "usdt", "usdc", "market cap crypto", "exchange crypto", "binance", "indodax",
-        "bappebti", "regulasi kripto", "etf bitcoin", "etf crypto", "halving",
-        "defi", "nft", "staking", "airdrop", "token listing", "whale movement",
-        "on-chain data", "smart contract", "web3", "blockchain", "memecoin",
-        "likuidasi", "leverage", "funding rate", "perpetual futures", "cex", "dex",
+    # Big Tech / Platform
+    "bigtech": [
+        "apple", "google", "microsoft", "meta", "amazon", "nvidia",
+        "samsung", "huawei", "tesla", "bytedance", "tiktok",
+        "iphone", "android", "ios", "windows", "chrome", "safari",
+        "youtube", "instagram", "whatsapp", "telegram", "threads",
+        "play store", "app store", "cloud computing", "aws", "azure", "gcp",
+        "chip", "semiconductor", "gpu", "npu", "chipset",
+        "spacex", "starlink", "blue origin", "neuralink",
     ],
-    # Cross-cutting (global market, geopolitik, commodity)
+    # Digital Infrastructure & Cyber
+    "infra": [
+        "5g", "fiber optik", "data center", "cloud", "server",
+        "cybersecurity", "serangan siber", "hacker", "phishing",
+        "malware", "ransomware", "kebocoran data", "data breach",
+        "privasi digital", "protecting data", "encryption",
+        "dns", "vpn", "firewall", "zero day",
+        "komdigi", "kemenkominfo", "pse", "internet positif",
+        "digitalisasi", "transformasi digital", "smart city",
+    ],
+    # Gadget / Consumer Tech
+    "gadget": [
+        "smartphone", "laptop", "tablet", "earbuds", "smartwatch",
+        "headset", "vr", "ar", "mixed reality", "vision pro",
+        "robot", "drone", "ev", "mobil listrik", "charging station",
+        "gaming", "esports", "steam", "playstation", "xbox", "nintendo",
+        "wearable", "iot", "smart home", "smart tv",
+        "xiaomi", "oppo", "vivo", "realme", "asus", "acer", "lenovo",
+        "sony", "lg", "huawei", "nothing phone",
+    ],
+    # Cross-cutting (digital policy, kominfo, internet)
     "cross": [
-        "the fed", "suku bunga the fed", "fomc", "jerome powell", "resesi",
-        "volatilitas pasar", "sentimen pasar", "geopolitik", "harga minyak",
-        "harga emas", "perang dagang", "tarif", "china-as", "krisis ekonomi",
-        # Common global terms (added v17.7)
-        "suku bunga", "inflasi global", "minyak mentah", "komoditas",
-        "emas", "perak", "batu bara", "cpo", "sawit",
-        "reformasi", "kebijakan moneter", "stimulus", "bailout",
+        "uu pdp", "undang-undang pelindungan data", "blokir", "internet",
+        "netflix", "spotify", "streaming", "platform digital",
+        "pajak digital", "regulasi teknologi", "etika ai", "deepfake",
+        "misinformasi", "hoax", "fact-checking", "literasi digital",
+        "coding", "programmer", "developer", "hackathon", "bootcamp",
+        "freelance digital", "remote work", "wfh", "hybrid work",
     ],
 }
 
@@ -185,13 +195,12 @@ EXCLUDE_KEYWORDS = {
         "film", "serial", "drakor", "drama korea", "anime", "netflix",
         "musik", "konser", "album", "lagu", "chart musik",
         "reality show", "masterchef", "indonesian idol", "x factor",
+        "persebaya", "persib", "arema", "bali united", "bri liga 1",
     ],
 }
 
-# Ambiguous excludes — context-window check required (might be finance OR non-finance)
-# Example: "saham mata" (non-finance) vs "saham BCA" (finance)
-# Only flag if NO include keyword within ±100 chars
-AMBIGUOUS_EXCLUDES = ["saham", "token", "blok", "emas"]
+# Ambiguous excludes — context-window check required
+AMBIGUOUS_EXCLUDES = ["token", "robot", "drone"]
 
 # === 3. HELPER FUNCTIONS ===
 
@@ -265,7 +274,7 @@ def check_exclude_keywords(text):
         context = text_lower[max(0, idx-context_window):idx+len(kw)+context_window]
         has_include_nearby = any(inc in context for inc in include_kws_flat)
         if not has_include_nearby:
-            return f"{kw} (no finance context)"
+            return f"{kw} (no tech context)"
     return None
 
 def has_specific_data(text):
@@ -441,14 +450,14 @@ def check_image_accessible(url):
         return False
 
 def score_image(url):
-    """Score image candidate for finance content. Higher = better.
+    """Score image candidate for tech content. Higher = better.
     ponytail: no dimension parsing (needs struct + 8KB download) — add when image quality complaints arrive.
     """
     if not url:
         return -1
     score = 0
     url_lower = url.lower()
-    # Prefer chart/graph/infographic keywords (finance-specific)
+    # Prefer chart/graph/infographic keywords (tech-specific)
     good_kw = ["chart", "graph", "infographic", "grafik", "diagram", "data", "analytics", "dashboard"]
     if any(kw in url_lower for kw in good_kw):
         score += 40
@@ -608,7 +617,7 @@ def score_candidate(article, posted, feedback):
 
     Components:
       1. Keyword Match  : +6 pts per unique include keyword (max 5 = 30 pts)
-      2. Category Relev : 20 (Makro/Saham/Crypto) / 10 (cross) / 0 (none)
+      2. Category Relev : 20 (AI/Startup/BigTech/Infra/Gadget) / 10 (cross) / 0 (none)
       3. Recency        : 15 (<6h) / 10 (6-24h) / 5 (24-48h) / 0 (>48h)
       4. Data/Angka     : 15 (specific: %, Rp, bps, index) / 5 (vague digits) / 0
       5. Market Timing  : 10 (9-16 WIB) / 5 (extended) / 0 (night)
@@ -627,7 +636,7 @@ def score_candidate(article, posted, feedback):
     if article.get("url") in posted:
         return -1
 
-    # Hard reject: exclude keyword match (strict OR ambiguous w/o finance context)
+    # Hard reject: exclude keyword match (strict OR ambiguous w/o tech context)
     exclude_kw = check_exclude_keywords(combined)
     if exclude_kw:
         log(f"[SCORING] ❌ EXCLUDE matched ({exclude_kw}): {title[:60]}...", "WARN")
@@ -638,7 +647,7 @@ def score_candidate(article, posted, feedback):
     keyword_pts = min(matched_count, 5) * 6
 
     # 2. Category Relevance (max 20 pts)
-    if categories & {"makro", "saham", "crypto"}:
+    if categories & {"ai", "startup", "bigtech", "infra", "gadget"}:
         cat_pts = 20
     elif categories & {"cross"}:
         cat_pts = 10
@@ -722,10 +731,10 @@ def select_best_candidate(articles, posted, feedback, posted_titles=None, top_n=
     return top
 
 
-def is_finance_niche(article, article_content):
-    """Quick LLM check: is this article in the finance niche? Uses FULL content.
+def is_tech_niche(article, article_content):
+    """Quick LLM check: is this article in the tech/AI niche? Uses FULL content.
 
-    Returns True if finance, False otherwise. Default True on error (don't lose article).
+    Returns True if tech, False otherwise. Default True on error (don't lose article).
     Cost: ~$0.0016 per call (mistral, max_tokens=5, ~800 input tokens).
     Latency: ~3-5s per call.
     """
@@ -745,10 +754,10 @@ ARTIKEL (3000 char pertama):
 Niche apa artikel ini?
 
 Pilih SATU:
-- KEUANGAN: ekonomi makro, pasar modal, saham, IHSG, bank (regulasi/merger/fraud), fintech, kripto, inflasi, BI rate, properti komersial, industri, emiten
-- NON-KEUANGAN: retail (promo/diskon/sale), gaya hidup, hiburan, K-pop/film, teknologi konsumen (smartphone/laptop), travel, kuliner, fashion
+- TEKNOLOGI: artificial intelligence, AI tools, startup, unicorn, venture capital, gadget, smartphone, laptop, cybersecurity, cloud computing, 5G, robot, drone, EV, blockchain, gaming, esports, digital economy, e-commerce, fintech, edtech, platform digital, regulasi teknologi, data breach, programmer, hackathon
+- NON-TEKNOLOGI: ekonomi makro, pasar modal, saham, properti, kuliner, travel, gaya hidup, hiburan, olahraga, K-pop, film, musik, fashion, cuaca, politik murni
 
-Jawab: KEUANGAN atau NON-KEUANGAN. Hanya 1 kata."""
+Jawab: TEKNOLOGI atau NON-TEKNOLOGI. Hanya 1 kata."""
 
     api_key = os.environ.get("PIPELINE_MISTRAL_KEY")
     if not api_key:
@@ -771,9 +780,9 @@ Jawab: KEUANGAN atau NON-KEUANGAN. Hanya 1 kata."""
             return True
 
         result = resp.json()["choices"][0]["message"]["content"].strip().upper()
-        is_finance = "KEUANGAN" in result and "NON" not in result
-        log(f"[CLASSIFY] {article['title'][:50]}... → {result} → {'KEUANGAN' if is_finance else 'NON'}")
-        return is_finance
+        is_tech = "TEKNOLOGI" in result and "NON" not in result
+        log(f"[CLASSIFY] {article['title'][:50]}... → {result} → {'TEKNOLOGI' if is_tech else 'NON'}")
+        return is_tech
     except Exception as e:
         log(f"[CLASSIFY] Error: {e}, defaulting to YES", "WARN")
         return True
@@ -1177,7 +1186,7 @@ def generate_content(article, article_content):
     """Generate Threads content via LLM with model fallback."""
     handle = THREADS_HANDLE
     system_prompt = f"""# ROLE
-Finance content strategist for Threads. Output EXACTLY 6-slide JSON thread from the article provided.
+Tech/AI content strategist for Threads. Output EXACTLY 6-slide JSON thread from the article provided.
 
 [STRATEGY]
 6-post chained thread (Threads native "Add to thread" pattern). Each slide replies to the previous via reply_to_id, NOT siblings of root.
@@ -1224,7 +1233,7 @@ Mode: Strict RAG. Semua fakta HARUS berasal dari artikel yang diberikan.
 2. SETUP (2-4, MIN 2): What happened concretely + why it matters. Establishes who/what/when/where.
 3. COMPLICATION (2-4, MIN 2): Conflict/competing stakes. One-sided: "Artikel hanya membahas sisi [X]."
 4. INSIGHT (2-4, MIN 2): Key data point from article. No quote: "Tidak ada data spesifik dari [Name]" + one sentence on situation.
-5. POV (3-4, MIN 3): Start "POV gue:". Your interpretation. Must trace to article fact. Connect to broader finance wisdom OK here.
+5. POV (3-4, MIN 3): Start "POV gue:". Your interpretation. Must trace to article fact. Connect to broader tech/industry wisdom OK here.
 6. CTA (2-4, MIN 2): Rhetorical yes/no question to reader. NO first-person opinion (already done in S5). MUST callback S1. Last line: {{{{url}}}}
 
 [FORMAT — JSON only, no fences]
@@ -1475,7 +1484,7 @@ def count_sentences(text):
 def normalize_slide_sentences(slides_data):
     """Normalize slide sentence counts to fit per-slide bounds (no reject — auto-fix).
 
-    Per v16 spec (21 Jun 2026) — threads-finance-6slide reference:
+    Per v16 spec (21 Jun 2026) — threads-tech-6slide reference:
       - slide_1 HOOK:         min 1, max 2
       - slide_2 SETUP:        min 2, max 3
       - slide_3 COMPLICATION: min 2, max 3
@@ -1535,7 +1544,7 @@ def normalize_slide_sentences(slides_data):
 def validate_slide_sentences(slides_data):
     """Validate sentence counts per slide (per-slide bounds, no tolerance).
 
-    Per v16.1 spec (21 Jun 2026) — threads-finance-6slide reference, HOOK tightened:
+    Per v16.1 spec (21 Jun 2026) — threads-tech-6slide reference, HOOK tightened:
       - slide_1 HOOK:         2-3 sentences (was 1-2, user feedback: too short)
       - slide_2 SETUP:        2-3 sentences
       - slide_3 COMPLICATION: 2-3 sentences
@@ -1638,9 +1647,9 @@ def validate_grounding(slides_data, article_text):
             article_entities.add(e.lower())
     
     # Words that look like names but aren't (common Indonesian/English)
-    NOT_NAMES = {'bank indonesia', 'manajer investasi', 'presiden direktur', 'kementerian',
-                 'bursa efek', 'pasar uang', 'pasar modal', 'analisis teknikal', 'the fed',
-                 'point of view', 'pov gue', 'market cap', 'thread ini'}
+    NOT_NAMES = {'bank indonesia', 'kementerian', 'kominfo', 'komdigi', 'play store', 'app store',
+                 'bursa efek', 'pasar modal', 'point of view', 'pov gue',
+                 'market cap', 'thread ini', 'machine learning', 'artificial intelligence', 'smart city'}
     
     for i in range(1, 7):
         slide = slides_data.get(f"slide_{i}", {})
@@ -2081,7 +2090,7 @@ def run_pipeline():
         log("No eligible fresh content matches scoring thresholds.", "WARN")
         return False
 
-    # Try each candidate until one passes the finance niche check
+    # Try each candidate until one passes the tech niche check
     for i, (score, best) in enumerate(candidates, 1):
         log(f"[CANDIDATE {i}/{len(candidates)}] Trying: {best['title']} (score: {score:.1f})")
 
@@ -2090,12 +2099,12 @@ def run_pipeline():
             log(f"  Extraction too short, skipping", "WARN")
             continue
 
-        is_finance = is_finance_niche(best, article_content)
-        if not is_finance:
-            log(f"  ❌ Not finance niche, trying next candidate", "WARN")
+        is_tech = is_tech_niche(best, article_content)
+        if not is_tech:
+            log(f"  ❌ Not tech niche, trying next candidate", "WARN")
             continue
 
-        log(f"  ✅ Confirmed finance niche, generating content...", "INFO")
+        log(f"  ✅ Confirmed tech niche, generating content...", "INFO")
         slides_data = generate_content(best, article_content)
         if not slides_data:
             log(f"  Generation failed, trying next candidate", "WARN")
@@ -2141,7 +2150,7 @@ def run_pipeline():
             update_analytics(staging_data, r_id, p_link)
         return True
 
-    log(f"All {len(candidates)} candidates failed finance niche check or generation", "ERROR")
+    log(f"All {len(candidates)} candidates failed tech niche check or generation", "ERROR")
     return False
 
 if __name__ == "__main__":
